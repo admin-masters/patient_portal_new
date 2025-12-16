@@ -61,6 +61,15 @@ def _generate_code(prefix: str = "", length: int = 8) -> str:
     return prefix + "".join(secrets.choice(alphabet) for _ in range(length))
 
 
+# ✅ Migration-safe defaults (NO lambdas)
+def default_clinic_code() -> str:
+    return _generate_code("CL", 8)
+
+
+def default_doctor_id() -> str:
+    return _generate_code("", 8)
+
+
 def extract_postal_code(address_text: str) -> str | None:
     """Best-effort extraction of Indian PIN code (6 digits) from address."""
     m = re.search(r"\b(\d{6})\b", address_text or "")
@@ -116,7 +125,11 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class Clinic(models.Model):
-    clinic_code = models.CharField(max_length=12, unique=True, default=lambda: _generate_code("CL", 8))
+    clinic_code = models.CharField(
+        max_length=12,
+        unique=True,
+        default=default_clinic_code,  # ✅ fixed
+    )
     display_name = models.CharField(max_length=255, blank=True)
     clinic_phone = models.CharField(
         max_length=15,
@@ -135,10 +148,18 @@ class Clinic(models.Model):
 
 
 class DoctorProfile(models.Model):
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="doctor_profile")
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="doctor_profile",
+    )
 
     # System-generated doctor id shown on the registration form
-    doctor_id = models.CharField(max_length=12, unique=True, default=lambda: _generate_code("", 8))
+    doctor_id = models.CharField(
+        max_length=12,
+        unique=True,
+        default=default_doctor_id,  # ✅ fixed
+    )
 
     clinic = models.ForeignKey(Clinic, on_delete=models.PROTECT, related_name="doctors")
 
