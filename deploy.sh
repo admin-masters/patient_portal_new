@@ -18,8 +18,12 @@ echo "[deploy] Installing requirements..."
 $PIP install --upgrade pip
 $PIP install -r requirements.txt
 
+echo "[deploy] Ensuring .env exists (create from .env.example if missing)..."
+if [ ! -f "$PROJECT_DIR/.env" ] && [ -f "$PROJECT_DIR/.env.example" ]; then
+  cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+fi
+
 echo "[deploy] Loading environment (.env if present)..."
-# For manage.py commands (migrate/collectstatic) we load project .env
 if [ -f "$PROJECT_DIR/.env" ]; then
   set -a
   # shellcheck disable=SC1090
@@ -47,21 +51,52 @@ $PYTHON manage.py migrate --noinput --fake-initial
 echo "[deploy] Collecting static files..."
 $PYTHON manage.py collectstatic --noinput || true
 
-echo "[deploy] Making sure systemd EnvironmentFile exists..."
-# Your systemd unit is failing because its EnvironmentFile path is missing.
-# We can't edit the unit (no EC2 access), so we place the env file in likely expected paths.
-if [ -f "$PROJECT_DIR/.env" ]; then
-  sudo mkdir -p /etc/peds_edu || true
-  sudo cp -f "$PROJECT_DIR/.env" /etc/peds_edu/peds_edu.env || true
-  sudo cp -f "$PROJECT_DIR/.env" /etc/peds_edu.env || true
-  sudo cp -f "$PROJECT_DIR/.env" "$PROJECT_DIR/.env" || true
+echo "[deploy] Ensuring gunicorn exists..."
+if [ ! -f "$VENV_DIR/bin/gunicorn" ]; then
+  $PIP install gunicorn
 fi
 
-echo "[deploy] Ensuring gunicorn executable exists at expected location..."
-# If systemd ExecStart points to /home/ubuntu/venv/bin/gunicorn but it doesn't exist, make it.
-if [ ! -f "$VENV_DIR/bin/gunicorn" ]; then
-  echo "[deploy] gunicorn missing at $VENV_DIR/bin/gunicorn - attempting to install/repair..."
-  $PIP install gunicorn
+echo "[deploy] Ensuring systemd can run 'start' (ExecStart=start)..."
+# Create a robust start script in /usr/local/bin/start and link it to /usr/bin/start
+# so systemd can find it via PATH in most configurations.
+sudo tee /usr/local/bin/start >/dev/null <<EOF
+#!/usr/bin/env bash
+set -e
+
+cd "$PROJECT_DIR"
+
+# Load env if service didn't
+if [ -f "$PROJECT_DIR/.env" ]; then
+  set -a
+  source "$PROJECT_DIR/.env"
+  set +a
+fi
+
+# Sensible defaults (override via env if needed)
+: "\${GUNICORN_BIND:=127.0.0.1:8000}"
+: "\${GUNICORN_WORKERS:=3}"
+: "\${GUNICORN_TIMEOUT:=60}"
+
+exec "$VENV_DIR/bin/gunicorn" peds_edu.wsgi:application \\
+  --bind "\$GUNICORN_BIND" \\
+  --workers "\$GUNICORN_WORKERS" \\
+  --timeout "\$GUNICORN_TIMEOUT"
+EOF
+sudo chmod +x /usr/local/bin/start
+sudo ln -sf /usr/local/bin/start /usr/bin/start
+
+echo "[deploy] Making sure systemd EnvironmentFile exists (copy .env to the exact path it expects)..."
+UNIT_PATH=$(sudo systemctl show -p FragmentPath --value "$SERVICE_NAME" 2>/dev/null || true)
+if [ -n "$UNIT_PATH" ] && [ -f "$UNIT_PATH" ] && [ -f "$PROJECT_DIR/.env" ]; then
+  # Extract EnvironmentFile lines; supports optional leading '-' in EnvironmentFile=-/path/to/file
+  while IFS= read -r line; do
+    envpath="${line#EnvironmentFile=}"
+    envpath="${envpath#-}"
+    if [ -n "$envpath" ]; then
+      sudo mkdir -p "$(dirname "$envpath")" || true
+      sudo cp -f "$PROJECT_DIR/.env" "$envpath" || true
+    fi
+  done < <(sudo grep -E '^[[:space:]]*EnvironmentFile=' "$UNIT_PATH" || true)
 fi
 
 echo "[deploy] Reloading systemd units (safe)..."
@@ -74,9 +109,14 @@ rc=$?
 set -e
 
 if [ $rc -ne 0 ]; then
-  echo "[deploy] ERROR: service restart failed. Dumping status + logs..."
+  echo "[deploy] ERROR: service restart failed. Dumping status + logs + unit file..."
   sudo systemctl status "$SERVICE_NAME" --no-pager -l || true
   sudo journalctl -u "$SERVICE_NAME" -n 200 --no-pager || true
+  if [ -n "$UNIT_PATH" ] && [ -f "$UNIT_PATH" ]; then
+    echo "----- [deploy] systemd unit ($UNIT_PATH) -----"
+    sudo sed -n '1,200p' "$UNIT_PATH" || true
+    echo "----- [deploy] end unit -----"
+  fi
   exit $rc
 fi
 
