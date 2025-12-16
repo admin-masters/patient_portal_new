@@ -5,7 +5,7 @@ PROJECT_DIR=/home/ubuntu/peds_edu_app
 VENV_DIR=/home/ubuntu/venv
 PYTHON=$VENV_DIR/bin/python
 PIP=$VENV_DIR/bin/pip
-SERVICE_NAME=peds_edu   # matches /etc/systemd/system/peds_edu.service
+SERVICE_NAME=peds_edu
 
 cd "$PROJECT_DIR"
 
@@ -18,12 +18,8 @@ echo "[deploy] Installing requirements..."
 $PIP install --upgrade pip
 $PIP install -r requirements.txt
 
-echo "[deploy] Ensuring .env exists (create from .env.example if missing, do NOT overwrite)..."
-if [ ! -f "$PROJECT_DIR/.env" ] && [ -f "$PROJECT_DIR/.env.example" ]; then
-  cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
-fi
-
-echo "[deploy] Loading environment (.env if present)..."
+echo "[deploy] Loading environment from systemd EnvironmentFile path if present..."
+# We do NOT overwrite .env. We just source it for manage.py commands.
 if [ -f "$PROJECT_DIR/.env" ]; then
   set -a
   # shellcheck disable=SC1090
@@ -31,45 +27,14 @@ if [ -f "$PROJECT_DIR/.env" ]; then
   set +a
 fi
 
-echo "[deploy] Ensuring static dir exists to avoid warnings..."
-mkdir -p "$PROJECT_DIR/static"
-
 echo "[deploy] Running migrations..."
 $PYTHON manage.py migrate --noinput --fake-initial
 
 echo "[deploy] Collecting static files..."
 $PYTHON manage.py collectstatic --noinput || true
 
-echo "[deploy] Ensuring gunicorn exists..."
-if [ ! -f "$VENV_DIR/bin/gunicorn" ]; then
-  $PIP install gunicorn
-fi
-
-echo "[deploy] Ensuring systemd can run 'start' (ExecStart=start)..."
-sudo tee /usr/local/bin/start >/dev/null <<EOF
-#!/usr/bin/env bash
-set -e
-cd "$PROJECT_DIR"
-if [ -f "$PROJECT_DIR/.env" ]; then
-  set -a
-  source "$PROJECT_DIR/.env"
-  set +a
-fi
-: "\${GUNICORN_BIND:=127.0.0.1:8000}"
-: "\${GUNICORN_WORKERS:=3}"
-: "\${GUNICORN_TIMEOUT:=60}"
-exec "$VENV_DIR/bin/gunicorn" peds_edu.wsgi:application \\
-  --bind "\$GUNICORN_BIND" \\
-  --workers "\$GUNICORN_WORKERS" \\
-  --timeout "\$GUNICORN_TIMEOUT"
-EOF
-sudo chmod +x /usr/local/bin/start
-sudo ln -sf /usr/local/bin/start /usr/bin/start
-
-echo "[deploy] Reloading systemd units (safe)..."
+echo "[deploy] Reloading systemd (safe) + restarting service to pick up updated EnvironmentFile..."
 sudo systemctl daemon-reload || true
-
-echo "[deploy] Restarting gunicorn service..."
 sudo systemctl restart "$SERVICE_NAME"
 
 echo "[deploy] Done."
