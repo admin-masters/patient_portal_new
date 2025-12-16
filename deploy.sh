@@ -36,19 +36,27 @@ touch "$PROJECT_DIR/accounts/migrations/__init__.py" \
       "$PROJECT_DIR/sharing/migrations/__init__.py"
 
 echo "[deploy] Generating migrations for project apps..."
-# Force app-scoped makemigrations so these apps get initial migrations if missing
 $PYTHON manage.py makemigrations accounts --noinput
 $PYTHON manage.py makemigrations catalog --noinput
 $PYTHON manage.py makemigrations sharing --noinput
 
 echo "[deploy] Running migrations..."
-# --fake-initial helps when earlier failed runs partially created tables
 $PYTHON manage.py migrate --noinput --fake-initial
 
 echo "[deploy] Collecting static files..."
 $PYTHON manage.py collectstatic --noinput || true
 
 echo "[deploy] Restarting gunicorn service..."
+set +e
 sudo systemctl restart "$SERVICE_NAME"
+rc=$?
+set -e
+
+if [ $rc -ne 0 ]; then
+  echo "[deploy] ERROR: service restart failed. Dumping status + logs..."
+  sudo systemctl status "$SERVICE_NAME" --no-pager -l || true
+  sudo journalctl -u "$SERVICE_NAME" -n 200 --no-pager || true
+  exit $rc
+fi
 
 echo "[deploy] Done."
