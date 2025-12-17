@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>{% if is_new %}New Bundle{% else %}Edit Bundle: {{ cluster.code }}{% endif %}</h2>
+
+  <form method="post">
+    {% csrf_token %}
+
+    <fieldset style="margin-bottom:18px;">
+      <legend>Bundle Details</legend>
+      {{ form.as_p }}
+    </fieldset>
+
+    <fieldset style="margin-bottom:18px;">
+      <legend>Bundle Names (per language)</legend>
+      {{ lang_fs.management_form }}
+      <table border="1" cellpadding="8" cellspacing="0" style="width:100%;">
+        <tr>
+          <th>Language</th>
+          <th>Name</th>
+          <th>Delete?</th>
+        </tr>
+        {% for f in lang_fs.forms %}
+          <tr>
+            <td>{{ f.language_code }}</td>
+            <td>{{ f.name }}</td>
+            <td>{{ f.DELETE }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    </fieldset>
+
+    <fieldset style="margin-bottom:18px;">
+      <legend>Videos in this Bundle</legend>
+      {{ vid_fs.management_form }}
+      <table border="1" cellpadding="8" cellspacing="0" style="width:100%;">
+        <tr>
+          <th>Video</th>
+          <th>Sort Order</th>
+          <th>Delete?</th>
+        </tr>
+        {% for f in vid_fs.forms %}
+          <tr>
+            <td>{{ f.video }}</td>
+            <td>{{ f.sort_order }}</td>
+            <td>{{ f.DELETE }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    </fieldset>
+
+    <button type="submit">Save</button>
+    <a href="{% url 'publisher:cluster_list' %}" style="margin-left:12px;">Back</a>
+  </form>
+{% endblock %}
