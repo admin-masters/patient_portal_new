@@ -90,7 +90,7 @@ DATABASES = {
         "NAME": env("DB_NAME", "peds_edu"),
         "USER": env("DB_USER", "peds_edu"),
         "PASSWORD": env("DB_PASSWORD", "Bv9ALOgzFszxDYso"),
-        "HOST": env("DB_HOST", "127.0.0.1"),
+        "HOST": env("DB_HOST", "35.154.221.92"),
         "PORT": env("DB_PORT", "3306"),
         "OPTIONS": {
             "charset": "utf8mb4",
