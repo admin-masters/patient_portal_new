@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>Publishing Dashboard</h2>
+  <ul>
+    <li><a href="{% url 'publisher:video_list' %}">Videos</a></li>
+    <li><a href="{% url 'publisher:cluster_list' %}">Video Bundles</a></li>
+    <li><a href="{% url 'publisher:map_list' %}">Video Trigger Maps</a></li>
+  </ul>
+{% endblock %}
