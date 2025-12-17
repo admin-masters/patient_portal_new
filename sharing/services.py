@@ -185,20 +185,73 @@ class TranslitEngines:
             return sentence
 
 
-def build_whatsapp_message_prefixes(doctor_name: str) -> Dict[str, str]:
-    """Return per-language message prefix (without the final link).
+from __future__ import annotations
 
-    JS will append the patient link at the end.
-    """
+import hashlib
+from django.core.cache import cache
 
-    base = (
+from catalog.constants import LANGUAGE_CODES
+
+# WhatsApp prefix templates (native language; doctor name kept as entered)
+_WA_PREFIX_TEMPLATES = {
+    "en": (
         "Your doctor {doctor_name} has sent you the following video/videos. "
-        "It is very important that you view them and do as they say, as these are for important observations by your doctor. "
+        "It is very important that you view them and follow the instructions, as these are for important observations by your doctor. "
         "Your child's health and wellbeing depend upon following the instructions in the videos."
-    ).format(doctor_name=doctor_name)
+    ),
+    "hi": (
+        "आपके डॉक्टर {doctor_name} ने आपको निम्न वीडियो/वीडियो भेजे हैं। "
+        "कृपया इन्हें ध्यान से देखें और वीडियो में दिए गए निर्देशों का पालन करें, क्योंकि ये आपके डॉक्टर के महत्वपूर्ण निरीक्षणों के लिए हैं। "
+        "आपके बच्चे का स्वास्थ्य और भलाई इन वीडियो में दिए गए निर्देशों का पालन करने पर निर्भर है।"
+    ),
+    "te": (
+        "మీ డాక్టర్ {doctor_name} మీరు చూడాల్సిన వీడియో/వీడియోలను పంపించారు. "
+        "దయచేసి ఇవి తప్పనిసరిగా చూసి, వీడియోల్లో చెప్పిన సూచనలను పాటించండి—ఇవి మీ డాక్టర్‌కు అవసరమైన ముఖ్యమైన పరిశీలనల కోసం ఉన్నాయి. "
+        "మీ పిల్లల ఆరోగ్యం మరియు శ్రేయస్సు ఈ సూచనలను పాటించడంపై ఆధారపడి ఉంటుంది."
+    ),
+    "ml": (
+        "നിങ്ങളുടെ ഡോക്ടർ {doctor_name} നിങ്ങളിലേക്ക് താഴെ പറയുന്ന വീഡിയോ/വീഡിയോകൾ അയച്ചിട്ടുണ്ട്. "
+        "ദയവായി ഇവ ശ്രദ്ധपूर्वം കാണുകയും വീഡിയോയിൽ പറഞ്ഞിരിക്കുന്ന നിർദ്ദേശങ്ങൾ പാലിക്കുകയും ചെയ്യുക—ഇവ നിങ്ങളുടെ ഡോക്ടറുടെ പ്രധാന നിരീക്ഷണങ്ങൾക്കായി ആണ്. "
+        "നിങ്ങളുടെ കുട്ടിയുടെ ആരോഗ്യവും ക്ഷേമവും ഈ നിർദ്ദേശങ്ങൾ പാലിക്കുന്നതിനെ ആശ്രയിച്ചിരിക്കുന്നു."
+    ),
+    "mr": (
+        "तुमच्या डॉक्टरांनी {doctor_name} तुम्हाला खालील व्हिडिओ/व्हिडिओ पाठवले आहेत. "
+        "कृपया ते काळजीपूर्वक पहा आणि व्हिडिओमधील सूचना पाळा, कारण हे तुमच्या डॉक्टरांच्या महत्त्वाच्या निरीक्षणांसाठी आहेत. "
+        "तुमच्या मुलाचे आरोग्य आणि कल्याण या सूचनांचे पालन करण्यावर अवलंबून आहे."
+    ),
+    "kn": (
+        "ನಿಮ್ಮ ವೈದ್ಯರಾದ {doctor_name} ನಿಮಗೆ ಕೆಳಗಿನ ವೀಡಿಯೊ/ವೀಡಿಯೊಗಳನ್ನು ಕಳುಹಿಸಿದ್ದಾರೆ. "
+        "ದಯವಿಟ್ಟು ಅವನ್ನು ಗಮನದಿಂದ ನೋಡಿ ಮತ್ತು ವೀಡಿಯೊಗಳಲ್ಲಿ ನೀಡಿರುವ ಸೂಚನೆಗಳನ್ನು ಅನುಸರಿಸಿ—ಇವು ನಿಮ್ಮ ವೈದ್ಯರಿಗೆ ಅಗತ್ಯವಾದ ಮಹತ್ವದ ಗಮನಿಕೆಗಳಿಗಾಗಿ. "
+        "ನಿಮ್ಮ ಮಗುವಿನ ಆರೋಗ್ಯ ಮತ್ತು ಸುಖಸಮೃದ್ಧಿ ಈ ಸೂಚನೆಗಳನ್ನು ಪಾಲಿಸುವುದರ ಮೇಲೆ ಅವಲಂಬಿತವಾಗಿದೆ."
+    ),
+    "ta": (
+        "உங்கள் மருத்துவர் {doctor_name} உங்களுக்கு கீழ்க்காணும் வீடியோ/வீடியோக்களை அனுப்பியுள்ளார். "
+        "தயவுசெய்து அவற்றை கவனமாக பார்த்து, வீடியோவில் கூறியுள்ள வழிமுறைகளைப் பின்பற்றவும்—இவை உங்கள் மருத்துவரின் முக்கியமான கவனிப்புகளுக்காக அனுப்பப்பட்டவை. "
+        "உங்கள் குழந்தையின் ஆரோக்கியமும் நலனும் இந்த வழிமுறைகளைப் பின்பற்றுவதில் சார்ந்துள்ளது."
+    ),
+    "bn": (
+        "আপনার ডাক্তার {doctor_name} আপনাকে নিচের ভিডিও/ভিডিওগুলো পাঠিয়েছেন। "
+        "অনুগ্রহ করে এগুলো মনোযোগ দিয়ে দেখুন এবং ভিডিওতে দেওয়া নির্দেশনা মেনে চলুন, কারণ এগুলো আপনার ডাক্তারের গুরুত্বপূর্ণ পর্যবেক্ষণের জন্য। "
+        "আপনার শিশুর স্বাস্থ্য ও সুস্থতা এই নির্দেশনাগুলো অনুসরণ করার ওপর নির্ভর করে।"
+    ),
+}
 
-    engines = TranslitEngines()
-    prefixes: Dict[str, str] = {}
-    for lang in LANGUAGE_CODES:
-        prefixes[lang] = engines.translit_sentence(base, lang)
-    return prefixes
+
+def build_whatsapp_message_prefixes(doctor_name: str) -> dict[str, str]:
+    doctor_name = (doctor_name or "").strip() or "your doctor"
+
+    # cache per doctor_name (fast + avoids recompute)
+    h = hashlib.sha1(doctor_name.encode("utf-8")).hexdigest()[:12]
+    cache_key = f"wa_prefixes_v2_{h}"
+    cached = cache.get(cache_key)
+    if isinstance(cached, dict) and cached:
+        return cached
+
+    out: dict[str, str] = {}
+    for lc in LANGUAGE_CODES:
+        tmpl = _WA_PREFIX_TEMPLATES.get(lc) or _WA_PREFIX_TEMPLATES["en"]
+        out[lc] = tmpl.format(doctor_name=doctor_name)
+
+    cache.set(cache_key, out, 24 * 3600)
+    return out
+
