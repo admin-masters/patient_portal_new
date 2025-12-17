@@ -1,11 +1,13 @@
 import logging
 import os
-from pathlib import Path
 import socket
 import ssl as ssl_lib
+import time
+from email.message import EmailMessage
+from pathlib import Path
+import smtplib
 
 from django.conf import settings
-from django.core.mail import send_mail
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
@@ -16,22 +18,7 @@ logger = logging.getLogger(__name__)
 ENV_PATH = Path("/home/ubuntu/peds_edu_app/.env")
 
 
-def _probe_outbound(host: str, port: int, use_ssl: bool) -> str:
-    try:
-        sock = socket.create_connection((host, port), timeout=10)
-        if use_ssl:
-            ctx = ssl_lib.create_default_context()
-            sock = ctx.wrap_socket(sock, server_hostname=host)
-        sock.close()
-        return "tcp_ok" + ("_ssl_ok" if use_ssl else "")
-    except Exception as e:
-        return f"{type(e).__name__}: {str(e)}"
-
-
 def _read_env_var(name: str, default: str = "") -> str:
-    """
-    Read from process env first; if missing, fallback to parsing /home/ubuntu/peds_edu_app/.env.
-    """
     val = (os.getenv(name) or "").strip()
     if val:
         return val
@@ -64,6 +51,126 @@ def _smtp_enabled() -> bool:
     return "smtp" in (backend or "").lower()
 
 
+def _probe_outbound(host: str, port: int, use_ssl: bool) -> str:
+    try:
+        sock = socket.create_connection((host, port), timeout=10)
+        if use_ssl:
+            ctx = ssl_lib.create_default_context()
+            sock = ctx.wrap_socket(sock, server_hostname=host)
+        sock.close()
+        return "tcp_ok" + ("_ssl_ok" if use_ssl else "")
+    except Exception as e:
+        return f"{type(e).__name__}: {str(e)}"
+
+
+class _CapturingSMTPMixin:
+    """Mixin to capture smtplib debug output."""
+    def __init__(self, *args, **kwargs):
+        self._debug_lines: list[str] = []
+        super().__init__(*args, **kwargs)
+
+    def _print_debug(self, *args):
+        try:
+            self._debug_lines.append(" ".join(str(a) for a in args))
+        except Exception:
+            pass
+
+    def get_transcript(self) -> str:
+        return "\n".join(self._debug_lines)
+
+
+class CapturingSMTP(_CapturingSMTPMixin, smtplib.SMTP):
+    pass
+
+
+class CapturingSMTP_SSL(_CapturingSMTPMixin, smtplib.SMTP_SSL):
+    pass
+
+
+def _smtp_send_raw(to_email: str, subject: str, text: str) -> tuple[bool, str, str]:
+    """
+    Returns: (success, transcript, error_message)
+    """
+    host = getattr(settings, "EMAIL_HOST", "") or "smtp.sendgrid.net"
+    port = int(getattr(settings, "EMAIL_PORT", 587) or 587)
+    use_tls = bool(getattr(settings, "EMAIL_USE_TLS", False))
+    use_ssl = bool(getattr(settings, "EMAIL_USE_SSL", False))
+    user = getattr(settings, "EMAIL_HOST_USER", "") or "apikey"
+    password = getattr(settings, "EMAIL_HOST_PASSWORD", "") or ""
+    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "") or getattr(settings, "SENDGRID_FROM_EMAIL", "")
+
+    # Build message
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = to_email
+    msg.set_content(text)
+
+    transcript = []
+
+    # Retry on intermittent disconnects
+    for attempt in range(1, 4):
+        smtp = None
+        try:
+            if use_ssl:
+                ctx = ssl_lib.create_default_context()
+                smtp = CapturingSMTP_SSL(host=host, port=port, timeout=15, context=ctx)
+            else:
+                smtp = CapturingSMTP(host=host, port=port, timeout=15)
+
+            smtp.set_debuglevel(1)
+
+            # Greet
+            smtp.ehlo()
+
+            # STARTTLS path (usually port 587)
+            if use_tls and not use_ssl:
+                ctx = ssl_lib.create_default_context()
+                smtp.starttls(context=ctx)
+                smtp.ehlo()
+
+            # Auth
+            if user and password:
+                smtp.login(user, password)
+
+            # Send
+            smtp.send_message(msg)
+
+            # Quit cleanly
+            try:
+                smtp.quit()
+            except Exception:
+                try:
+                    smtp.close()
+                except Exception:
+                    pass
+
+            t = smtp.get_transcript()
+            return True, t, ""
+
+        except smtplib.SMTPServerDisconnected as e:
+            # Capture transcript so far and retry
+            t = smtp.get_transcript() if smtp else ""
+            transcript.append(f"--- attempt {attempt} disconnected ---\n{t}")
+            if attempt < 3:
+                time.sleep(1.5 * attempt)
+                continue
+            return False, "\n\n".join(transcript), f"SMTPServerDisconnected: {str(e)}"
+
+        except Exception as e:
+            t = smtp.get_transcript() if smtp else ""
+            return False, t, f"{type(e).__name__}: {str(e)}"
+
+        finally:
+            try:
+                if smtp:
+                    smtp.close()
+            except Exception:
+                pass
+
+    return False, "\n\n".join(transcript), "Unknown SMTP failure"
+
+
 def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
     """
     Sends email:
@@ -72,57 +179,26 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
 
     Always logs to EmailLog.
     """
-
     # ---------- SMTP path ----------
     if _smtp_enabled():
-        try:
-            send_mail(
-                subject=subject,
-                message=text,
-                from_email=(
-                    getattr(settings, "DEFAULT_FROM_EMAIL", "")
-                    or getattr(settings, "SENDGRID_FROM_EMAIL", "")
-                ),
-                recipient_list=[to_email],
-                fail_silently=False,
-            )
-            EmailLog.objects.create(
-                to_email=to_email,
-                subject=subject,
-                provider="smtp",
-                success=True,
-                status_code=202,
-                response_body="Sent via SMTP backend",
-                error="",
-            )
-            return True
+        host = getattr(settings, "EMAIL_HOST", "smtp.sendgrid.net")
+        port = int(getattr(settings, "EMAIL_PORT", 587) or 587)
+        use_ssl = bool(getattr(settings, "EMAIL_USE_SSL", False))
 
-        except Exception as e:
-            host = getattr(settings, "EMAIL_HOST", "")
-            port = int(getattr(settings, "EMAIL_PORT", "587"))
-            use_ssl = bool(getattr(settings, "EMAIL_USE_SSL", False))
+        probe = _probe_outbound(host, port, use_ssl)
 
-            probe = _probe_outbound(host, port, use_ssl)
+        ok, transcript, err = _smtp_send_raw(to_email, subject, text)
 
-            EmailLog.objects.create(
-                to_email=to_email,
-                subject=subject,
-                provider="smtp",
-                success=False,
-                status_code=None,
-                response_body="",
-                error=(
-                    f"{type(e).__name__}: {str(e)} | "
-                    f"host={host} "
-                    f"port={port} "
-                    f"tls={getattr(settings,'EMAIL_USE_TLS','')} "
-                    f"ssl={use_ssl} "
-                    f"user={getattr(settings,'EMAIL_HOST_USER','')} "
-                    f"| probe={probe}"
-                ),
-            )
-            logger.exception("SMTP send failed")
-            return False
+        EmailLog.objects.create(
+            to_email=to_email,
+            subject=subject,
+            provider="smtp",
+            success=ok,
+            status_code=202 if ok else None,
+            response_body=transcript or "",
+            error=("" if ok else f"{err} | host={host} port={port} tls={getattr(settings,'EMAIL_USE_TLS','')} ssl={getattr(settings,'EMAIL_USE_SSL','')} user={getattr(settings,'EMAIL_HOST_USER','')} | probe={probe}"),
+        )
+        return ok
 
     # ---------- SendGrid Web API path ----------
     api_key = (getattr(settings, "SENDGRID_API_KEY", "") or "").strip()
@@ -177,7 +253,6 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
             response_body=body,
             error="" if ok else f"SendGrid non-202 | {key_fingerprint} from={from_email}",
         )
-
         return ok
 
     except Exception as e:
@@ -215,6 +290,5 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
             response_body=body,
             error=f"{str(e)} | {key_fingerprint} from={from_email}",
         )
-
         logger.exception("SendGrid send failed")
         return False
