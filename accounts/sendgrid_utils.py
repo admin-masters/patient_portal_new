@@ -2,9 +2,8 @@ import logging
 import os
 from pathlib import Path
 
-import requests  # TEMP: for SendGrid auth diagnostics
-
 from django.conf import settings
+from django.core.mail import send_mail
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
@@ -18,7 +17,6 @@ ENV_PATH = Path("/home/ubuntu/peds_edu_app/.env")
 def _read_env_var(name: str, default: str = "") -> str:
     """
     Read from process env first; if missing, fallback to parsing /home/ubuntu/peds_edu_app/.env.
-    This bypasses systemd EnvironmentFile confusion.
     """
     val = (os.getenv(name) or "").strip()
     if val:
@@ -44,25 +42,57 @@ def _read_env_var(name: str, default: str = "") -> str:
     return default
 
 
-# ---------------------------------------------------------------------------
-# TEMP diagnostic helper: verify SendGrid auth independently of Mail Send
-# ---------------------------------------------------------------------------
-def debug_sendgrid_auth() -> tuple[int | None, str]:
-    api_key = _read_env_var("SENDGRID_API_KEY", "")
-    headers = {"Authorization": f"Bearer {api_key}"}
-    try:
-        r = requests.get(
-            "https://api.sendgrid.com/v3/scopes",
-            headers=headers,
-            timeout=15,
-        )
-        return r.status_code, r.text
-    except Exception as e:
-        return None, str(e)
+def _smtp_enabled() -> bool:
+    mode = (os.getenv("EMAIL_BACKEND") or "").strip().lower()
+    if mode:
+        return mode == "smtp"
+    # fallback to Django settings-derived mode
+    backend = getattr(settings, "EMAIL_BACKEND", "")
+    return "smtp" in (backend or "").lower()
 
 
 def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
-    # Prefer Django settings, but fall back to reading .env explicitly
+    """
+    Sends email:
+    - Prefer SMTP if EMAIL_BACKEND=smtp (recommended workaround).
+    - Otherwise attempt SendGrid Web API.
+
+    Always logs to EmailLog.
+    """
+    # ---------- SMTP path ----------
+    if _smtp_enabled():
+        try:
+            send_mail(
+                subject=subject,
+                message=text,
+                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "") or getattr(settings, "SENDGRID_FROM_EMAIL", ""),
+                recipient_list=[to_email],
+                fail_silently=False,
+            )
+            EmailLog.objects.create(
+                to_email=to_email,
+                subject=subject,
+                provider="smtp",
+                success=True,
+                status_code=202,
+                response_body="Sent via SMTP backend",
+                error="",
+            )
+            return True
+        except Exception as e:
+            EmailLog.objects.create(
+                to_email=to_email,
+                subject=subject,
+                provider="smtp",
+                success=False,
+                status_code=None,
+                response_body="",
+                error=str(e),
+            )
+            logger.exception("SMTP send failed")
+            return False
+
+    # ---------- SendGrid Web API path ----------
     api_key = (getattr(settings, "SENDGRID_API_KEY", "") or "").strip()
     from_email = (getattr(settings, "SENDGRID_FROM_EMAIL", "") or "").strip()
 
@@ -115,13 +145,11 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
             response_body=body,
             error="" if ok else f"SendGrid non-202 | {key_fingerprint} from={from_email}",
         )
-
         return ok
 
     except Exception as e:
         status_code = getattr(e, "status_code", None)
 
-        # Try to extract response body from SendGrid/python-http-client exceptions
         body = ""
         try:
             raw_body = getattr(e, "body", None)
@@ -133,7 +161,6 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
         except Exception:
             body = ""
 
-        # Some exceptions store the HTTP response on e.response
         if not body:
             try:
                 resp = getattr(e, "response", None)
@@ -155,6 +182,5 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
             response_body=body,
             error=f"{str(e)} | {key_fingerprint} from={from_email}",
         )
-
         logger.exception("SendGrid send failed")
         return False
