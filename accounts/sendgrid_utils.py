@@ -2,6 +2,8 @@ import logging
 import os
 from pathlib import Path
 
+import requests  # TEMP: for SendGrid auth diagnostics
+
 from django.conf import settings
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
@@ -40,6 +42,23 @@ def _read_env_var(name: str, default: str = "") -> str:
         logger.exception("Failed reading .env at %s", ENV_PATH)
 
     return default
+
+
+# ---------------------------------------------------------------------------
+# TEMP diagnostic helper: verify SendGrid auth independently of Mail Send
+# ---------------------------------------------------------------------------
+def debug_sendgrid_auth() -> tuple[int | None, str]:
+    api_key = _read_env_var("SENDGRID_API_KEY", "")
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        r = requests.get(
+            "https://api.sendgrid.com/v3/scopes",
+            headers=headers,
+            timeout=15,
+        )
+        return r.status_code, r.text
+    except Exception as e:
+        return None, str(e)
 
 
 def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
