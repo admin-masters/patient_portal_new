@@ -99,6 +99,7 @@
 
   function renderChips() {
     const chips = [{code: 'ALL', display_name: 'All'}, ...catalog.clusters];
+
     elChips.innerHTML = '';
     for (const c of chips) {
       const b = document.createElement('button');
