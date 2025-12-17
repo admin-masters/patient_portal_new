@@ -13,6 +13,7 @@ Required env vars (minimum):
 Optional:
 - ALLOWED_HOSTS (comma-separated)
 - REDIS_URL (e.g. redis://localhost:6379/1)
+- SMTP settings (to bypass SendGrid Web API issues)
 """
 
 from __future__ import annotations
@@ -34,8 +35,6 @@ SECRET_KEY = env("DJANGO_SECRET_KEY", "dev-insecure-change-me")
 DEBUG = env("DJANGO_DEBUG", "1") == "1"
 
 ALLOWED_HOSTS = [h.strip() for h in env("ALLOWED_HOSTS", "*").split(",") if h.strip()]
-
-# Application definition
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -81,9 +80,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "peds_edu.wsgi.application"
 
-
-# Database
-
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
@@ -92,14 +88,9 @@ DATABASES = {
         "PASSWORD": env("DB_PASSWORD", "Bv9ALOgzFszxDYso"),
         "HOST": env("DB_HOST", "35.154.221.92"),
         "PORT": env("DB_PORT", "3306"),
-        "OPTIONS": {
-            "charset": "utf8mb4",
-        },
+        "OPTIONS": {"charset": "utf8mb4"},
     }
 }
-
-
-# Password validation
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -110,12 +101,8 @@ AUTH_PASSWORD_VALIDATORS = [
 
 AUTH_USER_MODEL = "accounts.User"
 
-
-# Internationalization
-
 LANGUAGE_CODE = "en"
 
-# Languages supported by the patient pages and doctor sharing workflow
 LANGUAGES = [
     ("en", "English"),
     ("hi", "Hindi"),
@@ -126,12 +113,10 @@ LANGUAGES = [
     ("ta", "Tamil"),
     ("bn", "Bengali"),
 ]
+
 TIME_ZONE = "Asia/Kolkata"
 USE_I18N = True
 USE_TZ = True
-
-
-# Static files
 
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
@@ -141,28 +126,41 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
-
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-
 # Sessions
-# Keep users logged in for a long time ("Subsequent use should retain the session in browser")
 SESSION_COOKIE_AGE = int(env("SESSION_COOKIE_AGE_SECONDS", str(60 * 60 * 24 * 90)))  # 90 days
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_SAVE_EVERY_REQUEST = True
-
 
 # Security (set these to True/secure in production behind HTTPS)
 CSRF_COOKIE_SECURE = env("CSRF_COOKIE_SECURE", "0") == "1"
 SESSION_COOKIE_SECURE = env("SESSION_COOKIE_SECURE", "0") == "1"
 SECURE_SSL_REDIRECT = env("SECURE_SSL_REDIRECT", "0") == "1"
 
+# App base URL for email/WhatsApp links
+APP_BASE_URL = env("APP_BASE_URL", "http://35.154.221.92").rstrip("/")
 
-# Email / SendGrid
-APP_BASE_URL = env("APP_BASE_URL", "http://35.154.221.92")
-SENDGRID_API_KEY = env("SENDGRID_API_KEY", "")
-SENDGRID_FROM_EMAIL = env("SENDGRID_FROM_EMAIL", "products@inditech.co.in")
+# SendGrid (Web API)
+SENDGRID_API_KEY = env("SENDGRID_API_KEY", "").strip()
+SENDGRID_FROM_EMAIL = env("SENDGRID_FROM_EMAIL", "products@inditech.co.in").strip()
 
+# SMTP fallback (recommended now)
+# Set EMAIL_BACKEND=smtp in .env to activate.
+EMAIL_BACKEND_MODE = env("EMAIL_BACKEND", "console").strip().lower()
+
+if EMAIL_BACKEND_MODE == "smtp":
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+else:
+    # safe default in non-prod/dev
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+EMAIL_HOST = env("EMAIL_HOST", "smtp.sendgrid.net")
+EMAIL_PORT = int(env("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = env("EMAIL_USE_TLS", "1") == "1"
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", "apikey")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", SENDGRID_API_KEY)  # default to SendGrid key if not set
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", SENDGRID_FROM_EMAIL)
 
 # Cache
 REDIS_URL = os.getenv("REDIS_URL")
@@ -184,11 +182,8 @@ else:
         }
     }
 
-# How long the catalog JSON is cached (for doctor share screen)
 CATALOG_CACHE_SECONDS = int(env("CATALOG_CACHE_SECONDS", str(60 * 60)))
 
-
-# Logging (simple stdout)
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
