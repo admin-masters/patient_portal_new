@@ -22,7 +22,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
-
+load_dotenv(BASE_DIR / ".env")
 
 def env(name: str, default: str | None = None) -> str:
     value = os.getenv(name, default)
@@ -143,10 +143,10 @@ SECURE_SSL_REDIRECT = env("SECURE_SSL_REDIRECT", "0") == "1"
 # App base URL
 APP_BASE_URL = env("APP_BASE_URL", "http://35.154.221.92").rstrip("/")
 
-BASE_DIR = Path(_file_).resolve().parent.parent
 
 
-load_dotenv(BASE_DIR / ".env")
+
+
 
 # SendGrid (Web API)
 SENDGRID_API_KEY = env("SENDGRID_API_KEY", "").strip()
