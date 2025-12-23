@@ -19,9 +19,6 @@ $PIP install --upgrade pip
 $PIP install -r requirements.txt
 
 echo "[deploy] Ensuring production env is preserved..."
-# Strategy:
-# - If .env.prod exists (server-managed), always use it as the source of truth.
-# - Otherwise, create .env from .env.example only if .env is missing.
 if [ -f "$PROJECT_DIR/.env.prod" ]; then
   cp -f "$PROJECT_DIR/.env.prod" "$PROJECT_DIR/.env"
 else
@@ -41,28 +38,73 @@ fi
 echo "[deploy] Ensuring static dir exists to avoid warnings..."
 mkdir -p "$PROJECT_DIR/static"
 
-# -------------------------------------------------------------------
-# Build PIN → State directory JSON from the committed CSV (if present)
-# -------------------------------------------------------------------
-echo "[deploy] Building India PIN directory JSON (PIN -> State)..."
-PINCODE_DATA_DIR="$PROJECT_DIR/accounts/data"
-PINCODE_CSV="${PINCODE_CSV_PATH:-$PINCODE_DATA_DIR/india_pincode_directory.csv}"
-PINCODE_JSON="${PINCODE_JSON_PATH:-$PINCODE_DATA_DIR/india_pincode_directory.json}"
+# ------------------------------------------------------------
+# PINCODE CSV -> JSON (required for auto-compute State)
+# ------------------------------------------------------------
+echo "[deploy] Ensuring India PIN directory JSON is present..."
 
+PINCODE_DATA_DIR="$PROJECT_DIR/accounts/data"
 mkdir -p "$PINCODE_DATA_DIR"
 
+# Accept multiple filenames to avoid “renaming” mistakes:
+# Preferred: accounts/data/india_pincode_directory.csv
+# Also accept: accounts/data/statepin.csv or repo-root statepin.csv
+PINCODE_CSV="${PINCODE_CSV_PATH:-$PINCODE_DATA_DIR/india_pincode_directory.csv}"
+if [ ! -f "$PINCODE_CSV" ] && [ -f "$PINCODE_DATA_DIR/statepin.csv" ]; then
+  PINCODE_CSV="$PINCODE_DATA_DIR/statepin.csv"
+fi
+if [ ! -f "$PINCODE_CSV" ] && [ -f "$PROJECT_DIR/statepin.csv" ]; then
+  PINCODE_CSV="$PROJECT_DIR/statepin.csv"
+fi
+
+PINCODE_JSON="${PINCODE_JSON_PATH:-$PINCODE_DATA_DIR/india_pincode_directory.json}"
+
+# Confirm the Django command exists (prevents silent no-op)
+if ! $PYTHON manage.py help --commands | grep -q "build_pincode_directory"; then
+  echo "[deploy] ERROR: Django command 'build_pincode_directory' not found."
+  echo "[deploy] Ensure these exist in repo:"
+  echo "        accounts/management/__init__.py"
+  echo "        accounts/management/commands/__init__.py"
+  echo "        accounts/management/commands/build_pincode_directory.py"
+  exit 1
+fi
+
 if [ -f "$PINCODE_CSV" ]; then
-  # Generates/overwrites the JSON deterministically from the CSV
+  echo "[deploy] Building PIN JSON from CSV: $PINCODE_CSV"
   $PYTHON manage.py build_pincode_directory --input "$PINCODE_CSV" --output "$PINCODE_JSON"
 else
-  # Do not break deploy if the CSV isn't present but a previously generated JSON exists.
-  if [ -f "$PINCODE_JSON" ]; then
-    echo "[deploy] PIN CSV not found at $PINCODE_CSV; keeping existing JSON at $PINCODE_JSON"
-  else
-    echo "[deploy] ERROR: Missing both PIN CSV ($PINCODE_CSV) and JSON ($PINCODE_JSON). Cannot compute State from PIN." >&2
-    exit 1
-  fi
+  echo "[deploy] PIN CSV not found. Will proceed only if an existing JSON is valid: $PINCODE_JSON"
 fi
+
+# Validate JSON is present and non-empty (fail deploy otherwise)
+export PINCODE_JSON
+$PYTHON - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+p = Path(os.environ.get("PINCODE_JSON", ""))
+if not p.exists():
+    print(f"[deploy] ERROR: PIN directory JSON not found at: {p}")
+    sys.exit(1)
+
+try:
+    data = json.loads(p.read_text(encoding="utf-8"))
+except Exception as e:
+    print(f"[deploy] ERROR: PIN directory JSON is not valid JSON: {e}")
+    sys.exit(1)
+
+if not isinstance(data, dict):
+    print("[deploy] ERROR: PIN directory JSON must be a JSON object (dict).")
+    sys.exit(1)
+
+n = len(data)
+print(f"[deploy] PIN directory entries: {n}")
+if n < 1000:
+    print("[deploy] ERROR: PIN directory JSON is too small (likely not generated correctly).")
+    sys.exit(1)
+PY
 
 echo "[deploy] Running migrations..."
 $PYTHON manage.py migrate --noinput --fake-initial
