@@ -52,6 +52,18 @@ class VideoLanguage(models.Model):
         return f"{self.video.code} [{self.language_code}] {self.title}"
 
 
+class VideoClusterLanguage(models.Model):
+    cluster = models.ForeignKey(VideoCluster, on_delete=models.CASCADE, related_name="languages")
+    language_code = models.CharField(max_length=10, choices=LANGUAGES)
+    title = models.CharField(max_length=255)
+
+    class Meta:
+        unique_together = ("cluster", "language_code")
+
+    def __str__(self):
+        return f"{self.cluster.code} [{self.language_code}] {self.title}"
+
+
 class Trigger(models.Model):
     display_name = models.CharField(max_length=255)
     primary_therapy = models.ForeignKey(TherapyArea, on_delete=models.PROTECT, related_name="primary_triggers")
@@ -72,3 +84,28 @@ class TriggerCluster(models.Model):
 
     def __str__(self):
         return f"{self.display_name} ({self.language_code})"
+
+
+class VideoClusterVideo(models.Model):
+    cluster = models.ForeignKey(VideoCluster, on_delete=models.CASCADE, related_name="cluster_videos")
+    video = models.ForeignKey(Video, on_delete=models.CASCADE, related_name="video_clusters")
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ("cluster", "video")
+
+    def __str__(self):
+        return f"{self.cluster.code} - {self.video.code}"
+
+
+class VideoTriggerMap(models.Model):
+    video = models.ForeignKey(Video, on_delete=models.CASCADE)
+    trigger = models.ForeignKey(Trigger, on_delete=models.CASCADE)
+    is_primary = models.BooleanField(default=False)
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ("video", "trigger")
+
+    def __str__(self):
+        return f"{self.video.code} -> {self.trigger.display_name}"
