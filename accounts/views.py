@@ -1,97 +1,201 @@
 from __future__ import annotations
 
-import logging
-
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.tokens import default_token_generator
 from django.db import transaction
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpResponseForbidden, HttpResponseServerError
 from django.shortcuts import redirect, render
 from django.urls import reverse
-from django.utils.encoding import force_bytes, force_str
-from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 
 from .forms import DoctorRegistrationForm, EmailAuthenticationForm, DoctorSetPasswordForm
-from .models import Clinic, DoctorProfile, User, extract_postal_code
+from .models import User, Clinic, DoctorProfile
+from .pincode_directory import IndiaPincodeDirectoryNotReady, get_state_for_pincode
 from .sendgrid_utils import send_email_via_sendgrid
-from .tokens import doctor_password_token
 
-logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------
 
 def _build_absolute_url(path: str) -> str:
-    base = settings.APP_BASE_URL.rstrip("/")
+    base = (settings.SITE_BASE_URL or "").rstrip("/")
     return f"{base}{path}"
 
 
-def _send_doctor_links_email(doctor: DoctorProfile, *, password_setup: bool) -> None:
-    clinic_link = _build_absolute_url(reverse("sharing:doctor_share", kwargs={"doctor_id": doctor.doctor_id}))
+def _send_doctor_links_email(doctor: DoctorProfile, password_setup: bool = True) -> bool:
+    """Send doctor/staff share link + (optional) password setup/reset link."""
+    if not doctor or not doctor.user:
+        return False
+
+    clinic_link = _build_absolute_url(reverse("sharing:doctor_share", args=[doctor.doctor_id]))
+    login_link = _build_absolute_url(reverse("accounts:login"))
+
+    body_lines = [
+        f"Hello {doctor.user.full_name or doctor.user.email},",
+        "",
+        "Your clinic has access to the CPD in Clinic portal.",
+        "",
+        f"Clinic link (doctor/staff sharing screen): {clinic_link}",
+        f"Login link: {login_link}",
+        "",
+    ]
 
     if password_setup:
+        token = default_token_generator.make_token(doctor.user)
         uid = urlsafe_base64_encode(force_bytes(doctor.user.pk))
-        token = doctor_password_token.make_token(doctor.user)
-        password_link = _build_absolute_url(reverse("accounts:password_reset", kwargs={"uidb64": uid, "token": token}))
-        subject = "Your clinic education link + set your password"
-        text = (
-            f"Hello Dr. {doctor.user.full_name},\n\n"
-            f"Your clinic's patient education system link is:\n{clinic_link}\n\n"
-            "To set your password (first time), open this link:\n"
-            f"{password_link}\n\n"
-            "Regards,\nPatient Education Team\n"
-        )
-    else:
-        subject = "Your clinic patient education system link"
-        text = (
-            f"Hello Dr. {doctor.user.full_name},\n\n"
-            f"Your clinic's patient education system link is:\n{clinic_link}\n\n"
-            "Regards,\nPatient Education Team\n"
+        setup_link = _build_absolute_url(reverse("accounts:password_reset", args=[uid, token]))
+        body_lines.extend(
+            [
+                "To set/reset your password, use the link below:",
+                setup_link,
+                "",
+            ]
         )
 
-    # Do not crash registration flow if email fails; log and proceed.
-    try:
-        send_email_via_sendgrid(doctor.user.email, subject, text)
-    except Exception:
-        logger.exception("Failed sending doctor links email")
+    body_lines.append("Thank you.")
+
+    return send_email_via_sendgrid(
+        subject="CPD in Clinic portal access",
+        to_emails=[doctor.user.email],
+        plain_text_content="\n".join(body_lines),
+    )
 
 
-def register_doctor(request: HttpRequest) -> HttpResponse:
+def _store_registration_draft(request, *, draft: dict, session_key: str) -> None:
+    """Store a draft (excluding files) in session for repopulation."""
+    request.session[session_key] = draft
+    request.session.modified = True
+
+
+def _pop_registration_draft(request, session_key: str) -> dict | None:
+    draft = request.session.pop(session_key, None)
+    if draft:
+        request.session.modified = True
+    return draft
+
+
+# ---------------------------------------------------------------------
+# Registration (new doctor)
+# ---------------------------------------------------------------------
+
+def register_doctor(request):
     if request.method == "GET":
-        provisional_id = DoctorProfile._meta.get_field("doctor_id").default()
-        form = DoctorRegistrationForm(initial={"doctor_id": provisional_id})
-        return render(request, "accounts/register.html", {"form": form})
+        doctor_id = DoctorProfile._meta.get_field("doctor_id").default()
 
+        initial = {"doctor_id": doctor_id}
+
+        # If we previously blocked submission due to invalid PIN, repopulate.
+        draft = _pop_registration_draft(request, session_key="doctor_registration_draft")
+        if isinstance(draft, dict):
+            initial.update(draft)
+            initial.setdefault("doctor_id", doctor_id)
+
+        form = DoctorRegistrationForm(initial=initial)
+        return render(request, "accounts/register.html", {"form": form, "mode": "register"})
+
+    # POST
     form = DoctorRegistrationForm(request.POST, request.FILES)
-    if not form.is_valid():
-        return render(request, "accounts/register.html", {"form": form})
 
-    doctor_id = form.cleaned_data["doctor_id"].strip()
-    full_name = form.cleaned_data["full_name"].strip()
-    email = form.cleaned_data["email"].strip().lower()
-    whatsapp_number = form.cleaned_data["whatsapp_number"].strip()
-    imc_number = form.cleaned_data["imc_number"].strip()
-    clinic_number = (form.cleaned_data.get("clinic_number") or "").strip()
-    address_text = form.cleaned_data["address_text"].strip()
-    state = form.cleaned_data["state"]
+    if not form.is_valid():
+        return render(request, "accounts/register.html", {"form": form, "mode": "register"})
+
+    doctor_id = form.cleaned_data.get("doctor_id") or ""
+    full_name = form.cleaned_data.get("full_name") or ""
+    email = form.cleaned_data.get("email") or ""
+    whatsapp_number = form.cleaned_data.get("whatsapp_number") or ""
+    clinic_number = form.cleaned_data.get("clinic_number") or ""
+    clinic_whatsapp_number = form.cleaned_data.get("clinic_whatsapp_number") or ""
+    imc_number = form.cleaned_data.get("imc_number") or ""
+    postal_code = form.cleaned_data.get("postal_code") or ""
+    address_text = form.cleaned_data.get("address_text") or ""
     photo = form.cleaned_data.get("photo")
 
-    postal_code = extract_postal_code(address_text) or ""
+    # Compute State from PIN code directory
+    try:
+        state = get_state_for_pincode(postal_code)
+    except IndiaPincodeDirectoryNotReady as e:
+        return HttpResponseServerError(str(e))
+
+    if not state:
+        _store_registration_draft(
+            request,
+            session_key="doctor_registration_draft",
+            draft={
+                "doctor_id": doctor_id,
+                "full_name": full_name,
+                "email": email,
+                "whatsapp_number": whatsapp_number,
+                "clinic_number": clinic_number,
+                "clinic_whatsapp_number": clinic_whatsapp_number,
+                "imc_number": imc_number,
+                "postal_code": postal_code,
+                "address_text": address_text,
+            },
+        )
+        return render(
+            request,
+            "accounts/pincode_invalid.html",
+            {
+                "return_url": reverse("accounts:register"),
+            },
+        )
+
+    # Duplicate email / whatsapp handling with resend
+    # (do not create a new doctor; show a dedicated response page)
+    existing_user = User.objects.filter(email=email).first()
+    if existing_user:
+        existing_doctor = getattr(existing_user, "doctor_profile", None)
+        if existing_doctor:
+            _send_doctor_links_email(existing_doctor, password_setup=True)
+
+        return render(
+            request,
+            "accounts/already_registered.html",
+            {
+                "message": (
+                    "This email address has already been registered for a doctor on this portal. "
+                    "The link to login and use the system has been sent to your email. "
+                    "Follow the instructions in the email to use your system"
+                ),
+                "login_url": reverse("accounts:login"),
+            },
+        )
+
+    existing_whatsapp = DoctorProfile.objects.select_related("user").filter(whatsapp_number=whatsapp_number).first()
+    if existing_whatsapp:
+        _send_doctor_links_email(existing_whatsapp, password_setup=True)
+
+        return render(
+            request,
+            "accounts/already_registered.html",
+            {
+                "message": (
+                    "This WhatsApp number has already been registered for a doctor on this portal. "
+                    "The link to login and use the system has been sent to your email. "
+                    "Follow the instructions in the email to use your system"
+                ),
+                "login_url": reverse("accounts:login"),
+            },
+        )
+
+    clinic_display_name = f"Dr. {full_name}" if full_name else ""
 
     with transaction.atomic():
-        if User.objects.filter(email=email).exists():
-            form.add_error("email", "This email is already registered.")
-            return render(request, "accounts/register.html", {"form": form})
-
+        # Avoid doctor_id collision
         if DoctorProfile.objects.filter(doctor_id=doctor_id).exists():
             doctor_id = DoctorProfile._meta.get_field("doctor_id").default()
 
         user = User.objects.create_user(email=email, full_name=full_name, password=None)
 
-        clinic_display_name = f"Dr. {full_name}"
         clinic = Clinic.objects.create(
             display_name=clinic_display_name,
             clinic_phone=clinic_number,
+            clinic_whatsapp_number=clinic_whatsapp_number,
             address_text=address_text,
             postal_code=postal_code,
             state=state,
@@ -103,128 +207,241 @@ def register_doctor(request: HttpRequest) -> HttpResponse:
             clinic=clinic,
             whatsapp_number=whatsapp_number,
             imc_number=imc_number,
+            postal_code=postal_code,
             photo=photo,
         )
 
     _send_doctor_links_email(doctor, password_setup=True)
 
-    clinic_link_path = reverse("sharing:doctor_share", kwargs={"doctor_id": doctor.doctor_id})
+    clinic_link_path = reverse("sharing:doctor_share", args=[doctor.doctor_id])
     clinic_link = _build_absolute_url(clinic_link_path)
 
-    return render(request, "accounts/register_success.html", {"doctor": doctor, "clinic_link": clinic_link})
+    return render(
+        request,
+        "accounts/register_success.html",
+        {
+            "doctor": doctor,
+            "clinic_link": clinic_link,
+        },
+    )
 
 
-def doctor_login(request: HttpRequest) -> HttpResponse:
-    if request.user.is_authenticated:
-        return redirect("sharing:home")
+# ---------------------------------------------------------------------
+# Modify clinic details (from doctor's sharing screen)
+# ---------------------------------------------------------------------
 
-    form = EmailAuthenticationForm(request, data=request.POST or None)
+@login_required
+def modify_clinic_details(request, doctor_id: str):
+    doctor = getattr(request.user, "doctor_profile", None)
+    if not doctor or doctor.doctor_id != doctor_id:
+        return HttpResponseForbidden("Not allowed.")
 
-    if request.method == "POST" and form.is_valid():
-        user = form.get_user()
-        login(request, user)
-        next_url = request.GET.get("next") or reverse("sharing:home")
-        return redirect(next_url)
+    session_key = f"doctor_modify_draft_{doctor_id}"
 
-    if request.method == "POST" and not form.is_valid():
-        email = (request.POST.get("username") or "").strip().lower()
-        if email:
-            user = User.objects.filter(email=email).first()
-            if user and not user.has_usable_password():
-                _send_password_reset_email(user)
-                messages.success(request, "Password setup instructions have been sent to your email address")
-                form = EmailAuthenticationForm(request)
+    if request.method == "GET":
+        initial = {
+            "doctor_id": doctor.doctor_id,
+            "full_name": doctor.user.full_name,
+            "email": doctor.user.email,
+            "whatsapp_number": doctor.whatsapp_number,
+            "clinic_number": doctor.clinic.clinic_phone if doctor.clinic else "",
+            "clinic_whatsapp_number": getattr(doctor.clinic, "clinic_whatsapp_number", "") if doctor.clinic else "",
+            "imc_number": doctor.imc_number,
+            "postal_code": doctor.postal_code or (doctor.clinic.postal_code if doctor.clinic else ""),
+            "address_text": doctor.clinic.address_text if doctor.clinic else "",
+        }
 
+        draft = _pop_registration_draft(request, session_key=session_key)
+        if isinstance(draft, dict):
+            initial.update(draft)
+
+        form = DoctorRegistrationForm(initial=initial)
+        return render(request, "accounts/register.html", {"form": form, "mode": "modify"})
+
+    # POST
+    form = DoctorRegistrationForm(request.POST, request.FILES)
+    if not form.is_valid():
+        return render(request, "accounts/register.html", {"form": form, "mode": "modify"})
+
+    # Ensure doctor_id isn't tampered (field is readonly, but still validate)
+    if (form.cleaned_data.get("doctor_id") or "") != doctor_id:
+        form.add_error("doctor_id", "Doctor ID mismatch.")
+        return render(request, "accounts/register.html", {"form": form, "mode": "modify"})
+
+    full_name = form.cleaned_data.get("full_name") or ""
+    email = form.cleaned_data.get("email") or ""
+    whatsapp_number = form.cleaned_data.get("whatsapp_number") or ""
+    clinic_number = form.cleaned_data.get("clinic_number") or ""
+    clinic_whatsapp_number = form.cleaned_data.get("clinic_whatsapp_number") or ""
+    imc_number = form.cleaned_data.get("imc_number") or ""
+    postal_code = form.cleaned_data.get("postal_code") or ""
+    address_text = form.cleaned_data.get("address_text") or ""
+    new_photo = form.cleaned_data.get("photo")
+
+    try:
+        state = get_state_for_pincode(postal_code)
+    except IndiaPincodeDirectoryNotReady as e:
+        return HttpResponseServerError(str(e))
+
+    if not state:
+        _store_registration_draft(
+            request,
+            session_key=session_key,
+            draft={
+                "doctor_id": doctor_id,
+                "full_name": full_name,
+                "email": email,
+                "whatsapp_number": whatsapp_number,
+                "clinic_number": clinic_number,
+                "clinic_whatsapp_number": clinic_whatsapp_number,
+                "imc_number": imc_number,
+                "postal_code": postal_code,
+                "address_text": address_text,
+            },
+        )
+        return render(
+            request,
+            "accounts/pincode_invalid.html",
+            {
+                "return_url": reverse("accounts:modify_clinic_details", args=[doctor_id]),
+            },
+        )
+
+    # Enforce uniqueness (excluding current doctor/user)
+    if User.objects.filter(email=email).exclude(pk=doctor.user.pk).exists():
+        form.add_error("email", "This email address is already registered.")
+        return render(request, "accounts/register.html", {"form": form, "mode": "modify"})
+
+    if DoctorProfile.objects.filter(whatsapp_number=whatsapp_number).exclude(pk=doctor.pk).exists():
+        form.add_error("whatsapp_number", "This WhatsApp number is already registered.")
+        return render(request, "accounts/register.html", {"form": form, "mode": "modify"})
+
+    clinic_display_name = f"Dr. {full_name}" if full_name else ""
+
+    with transaction.atomic():
+        # Update user
+        doctor.user.full_name = full_name
+        doctor.user.email = email
+        doctor.user.save(update_fields=["full_name", "email"])
+
+        # Update clinic
+        if doctor.clinic:
+            doctor.clinic.display_name = clinic_display_name
+            doctor.clinic.clinic_phone = clinic_number
+            doctor.clinic.clinic_whatsapp_number = clinic_whatsapp_number
+            doctor.clinic.address_text = address_text
+            doctor.clinic.postal_code = postal_code
+            doctor.clinic.state = state
+            doctor.clinic.save(
+                update_fields=[
+                    "display_name",
+                    "clinic_phone",
+                    "clinic_whatsapp_number",
+                    "address_text",
+                    "postal_code",
+                    "state",
+                ]
+            )
+
+        # Update doctor profile
+        doctor.whatsapp_number = whatsapp_number
+        doctor.imc_number = imc_number
+        doctor.postal_code = postal_code
+        if new_photo:
+            doctor.photo = new_photo
+            doctor.save(update_fields=["whatsapp_number", "imc_number", "postal_code", "photo"])
+        else:
+            doctor.save(update_fields=["whatsapp_number", "imc_number", "postal_code"])
+
+    messages.success(request, "Clinic details updated.")
+    return redirect("sharing:doctor_share", doctor_id=doctor_id)
+
+
+# ---------------------------------------------------------------------
+# Auth + password reset (doctor login)
+# ---------------------------------------------------------------------
+
+def doctor_login(request):
+    if request.method == "POST":
+        form = EmailAuthenticationForm(request, data=request.POST)
+        if form.is_valid():
+            user = form.get_user()
+            login(request, user)
+            doctor = getattr(user, "doctor_profile", None)
+            if doctor:
+                return redirect("sharing:doctor_share", doctor_id=doctor.doctor_id)
+            return redirect("publisher:dashboard")
+        messages.error(request, "Invalid login.")
+    else:
+        form = EmailAuthenticationForm(request)
     return render(request, "accounts/login.html", {"form": form})
 
 
 @login_required
-def doctor_logout(request: HttpRequest) -> HttpResponse:
+def doctor_logout(request):
     logout(request)
+    messages.info(request, "Logged out.")
     return redirect("accounts:login")
 
 
-def _send_password_reset_email(user: User) -> None:
-    print(f"[_send_password_reset_email] Function called for user ID={user.pk}")
-
+def _send_password_reset_email(user: User) -> bool:
+    token = default_token_generator.make_token(user)
     uid = urlsafe_base64_encode(force_bytes(user.pk))
-    print(f"[_send_password_reset_email] UID generated: {uid}")
+    reset_link = _build_absolute_url(reverse("accounts:password_reset", args=[uid, token]))
 
-    token = doctor_password_token.make_token(user)
-    print(f"[_send_password_reset_email] Token generated: {token}")
+    body_lines = [
+        f"Hello {user.full_name or user.email},",
+        "",
+        "To reset your password, use the link below:",
+        reset_link,
+        "",
+        "If you did not request this, you can ignore this email.",
+        "",
+        "Thank you.",
+    ]
 
-    link = _build_absolute_url(
-        reverse(
-            "accounts:password_reset",
-            kwargs={"uidb64": uid, "token": token}
-        )
-    )
-    print(f"[_send_password_reset_email] Password reset link generated: {link}")
-
-    subject = "Reset your password"
-    text = (
-        f"Hello {user.full_name},\n\n"
-        "Password reset instructions:\n"
-        f"{link}\n\n"
-        "If you did not request this, you can ignore this message.\n\n"
-        "Regards,\nPatient Education Team\n"
+    return send_email_via_sendgrid(
+        subject="Password reset",
+        to_emails=[user.email],
+        plain_text_content="\n".join(body_lines),
     )
 
-    print(f"[_send_password_reset_email] Email subject prepared: {subject}")
-    print(f"[_send_password_reset_email] Sending email to: {user.email}")
 
-    try:
-        send_email_via_sendgrid(user.email, subject, text)
-        print(f"[_send_password_reset_email] Email successfully sent to {user.email}")
-    except Exception as e:
-        print(f"[_send_password_reset_email] ERROR while sending email: {e}")
-        logger.exception("Failed sending password reset email")
-
-
-def request_password_reset(request: HttpRequest) -> HttpResponse:
-    print("[request_password_reset] Function called")
-
+def request_password_reset(request):
     if request.method == "POST":
-        print("[request_password_reset] Request method is POST")
-
         email = (request.POST.get("email") or "").strip().lower()
-        print(f"[request_password_reset] Email received: '{email}'")
-
         user = User.objects.filter(email=email).first()
-
         if user:
-            print(f"[request_password_reset] User found with ID={user.pk}, email={user.email}")
             _send_password_reset_email(user)
-        else:
-            print("[request_password_reset] No user found for this email")
-
         messages.success(
             request,
-            "password reset instructions have been sent to your email address"
+            "If the email exists in our system, a password reset link has been sent.",
         )
-        print("[request_password_reset] Success message added")
-
-        print("[request_password_reset] Redirecting to login page")
         return redirect("accounts:login")
 
-    print("[request_password_reset] Request method is not POST, rendering password request page")
-    return render(request, "accounts/password_request.html")
+    return render(request, "accounts/request_password_reset.html")
 
 
-def password_reset(request: HttpRequest, uidb64: str, token: str) -> HttpResponse:
+def password_reset(request, uidb64: str, token: str):
+    user = None
     try:
-        uid = force_str(urlsafe_base64_decode(uidb64))
+        from django.utils.http import urlsafe_base64_decode
+        uid = urlsafe_base64_decode(uidb64).decode()
         user = User.objects.get(pk=uid)
     except Exception:
         user = None
 
-    if user is None or not doctor_password_token.check_token(user, token):
-        return render(request, "accounts/password_reset_invalid.html")
-
-    form = DoctorSetPasswordForm(user, request.POST or None)
-    if request.method == "POST" and form.is_valid():
-        form.save()
-        messages.success(request, "Password updated. Please log in again with your new password.")
+    if not user or not default_token_generator.check_token(user, token):
+        messages.error(request, "Invalid or expired password reset link.")
         return redirect("accounts:login")
+
+    if request.method == "POST":
+        form = DoctorSetPasswordForm(user=user, data=request.POST)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Password updated. You can now login.")
+            return redirect("accounts:login")
+    else:
+        form = DoctorSetPasswordForm(user=user)
 
     return render(request, "accounts/password_reset.html", {"form": form})
