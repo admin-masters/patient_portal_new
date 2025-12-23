@@ -1,107 +1,46 @@
 {% extends "base.html" %}
+{% block title %}{{ page_title }}{% endblock %}
+{% block header_title %}{{ page_title }}{% endblock %}
 
 {% block content %}
-  <h2>
-    {% if is_new %}
-      New Video
-    {% else %}
-      Edit Video: {{ video.code }}
-    {% endif %}
-  </h2>
+<div class="card">
+  <h2>{{ page_title }}</h2>
 
   <form method="post">
     {% csrf_token %}
+    {{ form.as_p }}
 
-    <fieldset style="margin-bottom: 18px;">
-      <legend>Video Details</legend>
-      {{ form.as_p }}
-    </fieldset>
+    {% if formset.non_form_errors %}
+      <div class="message error">{{ formset.non_form_errors|striptags }}</div>
+    {% endif %}
 
-    <fieldset style="margin-bottom: 18px;">
-      <legend>Video Languages (titles + YouTube URLs)</legend>
+    <h3>Language Details (all languages required)</h3>
 
-      {{ formset.management_form }}
+    {{ formset.management_form }}
+    <table>
+      <tr>
+        <th>Language Code</th>
+        <th>Title</th>
+        <th>YouTube URL</th>
+      </tr>
 
-      <table border="1" cellpadding="8" cellspacing="0" style="width: 100%;">
-        <thead>
-          <tr>
-            <th>Language</th>
-            <th>Title</th>
-            <th>YouTube URL</th>
-            <th>Delete?</th>
-          </tr>
-        </thead>
-
-        <tbody>
-          {% for f in formset.forms %}
-            <tr>
-              <td>
-                {# IMPORTANT: render hidden fields (includes the inline row id) #}
-                {% for h in f.hidden_fields %}
-                  {{ h }}
-                {% endfor %}
-
-                {{ f.language_code }}
-
-                {% if f.language_code.errors %}
-                  <div style="color: #b00020; font-size: 12px;">
-                    {{ f.language_code.errors }}
-                  </div>
-                {% endif %}
-              </td>
-
-              <td>
-                {{ f.title }}
-
-                {% if f.title.errors %}
-                  <div style="color: #b00020; font-size: 12px;">
-                    {{ f.title.errors }}
-                  </div>
-                {% endif %}
-              </td>
-
-              <td>
-                {{ f.youtube_url }}
-
-                {% if f.youtube_url.errors %}
-                  <div style="color: #b00020; font-size: 12px;">
-                    {{ f.youtube_url.errors }}
-                  </div>
-                {% endif %}
-              </td>
-
-              <td>
-                {{ f.DELETE }}
-
-                {% if f.DELETE.errors %}
-                  <div style="color: #b00020; font-size: 12px;">
-                    {{ f.DELETE.errors }}
-                  </div>
-                {% endif %}
-              </td>
-            </tr>
-
-            {% if f.non_field_errors %}
-              <tr>
-                <td colspan="4">
-                  <div style="color: #b00020; font-size: 12px;">
-                    {{ f.non_field_errors }}
-                  </div>
-                </td>
-              </tr>
-            {% endif %}
-          {% endfor %}
-        </tbody>
-      </table>
-
-      {% if formset.non_form_errors %}
-        <div>{{ formset.non_form_errors }}</div>
-      {% endif %}
-    </fieldset>
+      {% for f in formset.forms %}
+        <tr>
+          <td>{{ f.language_code }}</td>
+          <td>
+            {{ f.title }}
+            {% if f.title.errors %}<div class="message error">{{ f.title.errors|striptags }}</div>{% endif %}
+          </td>
+          <td>
+            {{ f.youtube_url }}
+            {% if f.youtube_url.errors %}<div class="message error">{{ f.youtube_url.errors|striptags }}</div>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
 
     <button type="submit">Save</button>
-    <a href="{% url 'publisher:video_list' %}" style="margin-left: 12px;">
-      Back
-    </a>
+    <a href="{% url 'publisher:video_list' %}">Cancel</a>
   </form>
+</div>
 {% endblock %}
