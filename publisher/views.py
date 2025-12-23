@@ -8,7 +8,14 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 
 from catalog.models import TherapyArea, VideoCluster, Video, VideoLanguage, Trigger, TriggerCluster
-from .forms import TherapyAreaForm, VideoClusterForm, VideoForm, make_video_language_formset, TriggerForm, TriggerClusterForm
+from .forms import (
+    TherapyAreaForm,
+    VideoClusterForm,
+    VideoForm,
+    make_video_language_formset,
+    TriggerForm,
+    TriggerClusterForm,
+)
 
 
 @login_required
@@ -19,22 +26,17 @@ def dashboard(request):
 # -------------------------------
 # Therapy Areas CRUD
 # -------------------------------
-
 @staff_member_required
 def therapy_list(request):
     q = request.GET.get("q", "").strip()
-
-    # Hide inactive items and obvious test data
     qs = (
         TherapyArea.objects.filter(is_active=True)
         .exclude(code__istartswith="TEST")
         .exclude(display_name__istartswith="Test")
         .order_by("sort_order", "code")
     )
-
     if q:
         qs = qs.filter(Q(code__icontains=q) | Q(display_name__icontains=q))
-
     return render(request, "publisher/therapy_list.html", {"rows": qs, "q": q})
 
 
@@ -72,13 +74,14 @@ def therapy_delete(request, pk):
         obj.delete()
         messages.success(request, "Therapy area deleted.")
         return redirect("publisher:therapy_list")
-    return render(request, "publisher/confirm_delete.html", {"object": obj, "cancel_url": "publisher:therapy_list"})
+    return render(
+        request, "publisher/confirm_delete.html", {"object": obj, "cancel_url": "publisher:therapy_list"}
+    )
 
 
 # -------------------------------
 # Video Clusters CRUD
 # -------------------------------
-
 @staff_member_required
 def cluster_list(request):
     q = request.GET.get("q", "").strip()
@@ -122,13 +125,14 @@ def cluster_delete(request, pk):
         obj.delete()
         messages.success(request, "Cluster deleted.")
         return redirect("publisher:cluster_list")
-    return render(request, "publisher/confirm_delete.html", {"object": obj, "cancel_url": "publisher:cluster_list"})
+    return render(
+        request, "publisher/confirm_delete.html", {"object": obj, "cancel_url": "publisher:cluster_list"}
+    )
 
 
 # -------------------------------
 # Videos CRUD
 # -------------------------------
-
 @staff_member_required
 def video_list(request):
     q = request.GET.get("q", "").strip()
@@ -141,7 +145,6 @@ def video_list(request):
 @staff_member_required
 def video_create(request):
     FormSet = make_video_language_formset(extra=8)
-
     if request.method == "POST":
         form = VideoForm(request.POST)
         formset = FormSet(request.POST)
@@ -157,11 +160,11 @@ def video_create(request):
         initial = [{"language_code": code} for code in ["en", "hi", "te", "ml", "mr", "kn", "ta", "bn"]]
         formset = FormSet(initial=initial)
 
-    return render(request, "publisher/video_form.html", {
-        "form": form,
-        "formset": formset,
-        "page_title": "Add Video",
-    })
+    return render(
+        request,
+        "publisher/video_form.html",
+        {"form": form, "formset": formset, "page_title": "Add Video"},
+    )
 
 
 @staff_member_required
@@ -186,11 +189,9 @@ def video_edit(request, pk):
         initial = [{"language_code": code} for code in missing]
         formset = FormSet(instance=video, initial=initial)
 
-    return render(request, "publisher/video_form.html", {
-        "form": form,
-        "formset": formset,
-        "page_title": "Edit Video",
-    })
+    return render(
+        request, "publisher/video_form.html", {"form": form, "formset": formset, "page_title": "Edit Video"}
+    )
 
 
 @staff_member_required
@@ -206,7 +207,6 @@ def video_delete(request, pk):
 # -------------------------------
 # Triggers CRUD
 # -------------------------------
-
 @staff_member_required
 def trigger_list(request):
     q = request.GET.get("q", "").strip()
@@ -256,7 +256,6 @@ def trigger_delete(request, pk):
 # -------------------------------
 # Trigger Clusters CRUD
 # -------------------------------
-
 @staff_member_required
 def trigger_cluster_list(request):
     q = request.GET.get("q", "").strip()
@@ -300,4 +299,24 @@ def trigger_cluster_delete(request, pk):
         obj.delete()
         messages.success(request, "Trigger cluster deleted.")
         return redirect("publisher:trigger_cluster_list")
-    return render(request, "publisher/confirm_delete.html", {"object": obj, "cancel_url": "publisher:trigger_cluster_list"})
+    return render(
+        request, "publisher/confirm_delete.html", {"object": obj, "cancel_url": "publisher:trigger_cluster_list"}
+    )
+
+
+# -------------------------------
+# Trigger Maps CRUD (stubs to avoid errors)
+# -------------------------------
+@staff_member_required
+def map_list(request):
+    return render(request, "publisher/map_list.html")
+
+
+@staff_member_required
+def map_create(request):
+    return render(request, "publisher/map_form.html")
+
+
+@staff_member_required
+def map_edit(request, pk):
+    return render(request, "publisher/map_form.html")
