@@ -12,7 +12,7 @@ urlpatterns = [
     path("therapy-areas/<int:pk>/", views.therapy_edit, name="therapy_edit"),
 
     # Trigger Clusters
-    path("trigger-clusters/", views.triggercluster_list, name="triggercluster_list"),
+    path("trigger-clusters/", views.trigger_cluster_list, name="triggercluster_list"),
     path("trigger-clusters/new/", views.triggercluster_create, name="triggercluster_create"),
     path("trigger-clusters/<int:pk>/", views.triggercluster_edit, name="triggercluster_edit"),
 
