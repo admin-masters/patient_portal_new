@@ -1,0 +1,110 @@
+{
+  "Andhra Pradesh": [
+    { "from": "500001", "to": "539999" }
+  ],
+  "Arunachal Pradesh": [
+    { "from": "790001", "to": "792999" }
+  ],
+  "Assam": [
+    { "from": "781001", "to": "788999" }
+  ],
+  "Bihar": [
+    { "from": "800001", "to": "855999" }
+  ],
+  "Chhattisgarh": [
+    { "from": "490001", "to": "497999" }
+  ],
+  "Goa": [
+    { "from": "403001", "to": "403999" }
+  ],
+  "Gujarat": [
+    { "from": "360001", "to": "396999" }
+  ],
+  "Haryana": [
+    { "from": "121001", "to": "136999" }
+  ],
+  "Himachal Pradesh": [
+    { "from": "171001", "to": "177999" }
+  ],
+  "Jharkhand": [
+    { "from": "815001", "to": "834999" }
+  ],
+  "Karnataka": [
+    { "from": "560001", "to": "591999" }
+  ],
+  "Kerala": [
+    { "from": "670001", "to": "695999" }
+  ],
+  "Madhya Pradesh": [
+    { "from": "450001", "to": "488999" }
+  ],
+  "Maharashtra": [
+    { "from": "400001", "to": "444999" }
+  ],
+  "Manipur": [
+    { "from": "795001", "to": "795999" }
+  ],
+  "Meghalaya": [
+    { "from": "793001", "to": "794999" }
+  ],
+  "Mizoram": [
+    { "from": "796001", "to": "796999" }
+  ],
+  "Nagaland": [
+    { "from": "797001", "to": "798999" }
+  ],
+  "Odisha": [
+    { "from": "751001", "to": "769999" }
+  ],
+  "Punjab": [
+    { "from": "140001", "to": "160999" }
+  ],
+  "Rajasthan": [
+    { "from": "301001", "to": "345999" }
+  ],
+  "Sikkim": [
+    { "from": "737001", "to": "737999" }
+  ],
+  "Tamil Nadu": [
+    { "from": "600001", "to": "643999" }
+  ],
+  "Telangana": [
+    { "from": "500001", "to": "509999" }
+  ],
+  "Tripura": [
+    { "from": "799001", "to": "799999" }
+  ],
+  "Uttar Pradesh": [
+    { "from": "201001", "to": "285999" }
+  ],
+  "Uttarakhand": [
+    { "from": "246001", "to": "263999" }
+  ],
+  "West Bengal": [
+    { "from": "700001", "to": "743999" }
+  ],
+  "Andaman and Nicobar Islands": [
+    { "from": "744101", "to": "744999" }
+  ],
+  "Chandigarh": [
+    { "from": "160001", "to": "160999" }
+  ],
+  "Dadra and Nagar Haveli and Daman and Diu": [
+    { "from": "396001", "to": "396999" }
+  ],
+  "Delhi": [
+    { "from": "110001", "to": "110999" }
+  ],
+  "Jammu and Kashmir": [
+    { "from": "180001", "to": "194999" }
+  ],
+  "Ladakh": [
+    { "from": "194101", "to": "194999" }
+  ],
+  "Lakshadweep": [
+    { "from": "682551", "to": "682559" }
+  ],
+  "Puducherry": [
+    { "from": "605001", "to": "605999" }
+  ]
+}
