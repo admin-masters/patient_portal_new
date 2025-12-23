@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 from django import forms
 from django.contrib.auth.forms import AuthenticationForm, SetPasswordForm
 from django.core.validators import RegexValidator
