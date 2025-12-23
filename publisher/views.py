@@ -2,43 +2,39 @@ from __future__ import annotations
 
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.auth.decorators import login_required
+from django.db import transaction
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 
-from catalog.constants import LANGUAGE_CODES
-from catalog.models import (
-    Video, VideoLanguage,
-    VideoCluster, VideoClusterLanguage, VideoClusterVideo,
-    VideoTriggerMap,
-    TherapyArea, TriggerCluster, Trigger,
-)
-
-from .forms import (
-    VideoForm, make_video_language_formset,
-    VideoClusterForm, make_cluster_language_formset, make_cluster_video_formset,
-    VideoTriggerMapForm,
-    TherapyAreaForm, TriggerClusterForm, TriggerForm,
-)
+from catalog.models import TherapyArea, VideoCluster, Video, VideoLanguage, Trigger, TriggerCluster
+from .forms import TherapyAreaForm, VideoClusterForm, VideoForm, make_video_language_formset, TriggerForm, TriggerClusterForm
 
 
-# -----------------------------
-# Dashboard
-# -----------------------------
-
-@staff_member_required
+@login_required
 def dashboard(request):
     return render(request, "publisher/dashboard.html")
 
 
-# -----------------------------
-# Therapy Areas
-# -----------------------------
+# -------------------------------
+# Therapy Areas CRUD
+# -------------------------------
 
 @staff_member_required
 def therapy_list(request):
-    q = (request.GET.get("q") or "").strip()
-    qs = TherapyArea.objects.all().order_by("sort_order", "code")
+    q = request.GET.get("q", "").strip()
+
+    # Hide inactive items and obvious test data
+    qs = (
+        TherapyArea.objects.filter(is_active=True)
+        .exclude(code__istartswith="TEST")
+        .exclude(display_name__istartswith="Test")
+        .order_by("sort_order", "code")
+    )
+
     if q:
-        qs = qs.filter(code__icontains=q) | qs.filter(display_name__icontains=q)
+        qs = qs.filter(Q(code__icontains=q) | Q(display_name__icontains=q))
+
     return render(request, "publisher/therapy_list.html", {"rows": qs, "q": q})
 
 
@@ -47,90 +43,176 @@ def therapy_create(request):
     if request.method == "POST":
         form = TherapyAreaForm(request.POST)
         if form.is_valid():
-            obj = form.save()
+            form.save()
             messages.success(request, "Therapy area created.")
-            return redirect("publisher:therapy_edit", pk=obj.pk)
+            return redirect("publisher:therapy_list")
     else:
         form = TherapyAreaForm()
-    return render(request, "publisher/therapy_form.html", {"form": form, "is_new": True})
+    return render(request, "publisher/therapy_form.html", {"form": form, "page_title": "Add Therapy Area"})
 
 
 @staff_member_required
-def therapy_edit(request, pk: int):
+def therapy_edit(request, pk):
     obj = get_object_or_404(TherapyArea, pk=pk)
     if request.method == "POST":
         form = TherapyAreaForm(request.POST, instance=obj)
         if form.is_valid():
             form.save()
-            messages.success(request, "Therapy area saved.")
-            return redirect("publisher:therapy_edit", pk=obj.pk)
+            messages.success(request, "Therapy area updated.")
+            return redirect("publisher:therapy_list")
     else:
         form = TherapyAreaForm(instance=obj)
-    return render(
-        request,
-        "publisher/therapy_form.html",
-        {"form": form, "is_new": False, "obj": obj},
-    )
+    return render(request, "publisher/therapy_form.html", {"form": form, "page_title": "Edit Therapy Area"})
 
-
-# -----------------------------
-# Trigger Clusters
-# -----------------------------
 
 @staff_member_required
-def triggercluster_list(request):
-    q = (request.GET.get("q") or "").strip()
-    qs = TriggerCluster.objects.all().order_by("sort_order", "code")
+def therapy_delete(request, pk):
+    obj = get_object_or_404(TherapyArea, pk=pk)
+    if request.method == "POST":
+        obj.delete()
+        messages.success(request, "Therapy area deleted.")
+        return redirect("publisher:therapy_list")
+    return render(request, "publisher/confirm_delete.html", {"object": obj, "cancel_url": "publisher:therapy_list"})
+
+
+# -------------------------------
+# Video Clusters CRUD
+# -------------------------------
+
+@staff_member_required
+def cluster_list(request):
+    q = request.GET.get("q", "").strip()
+    qs = VideoCluster.objects.all().order_by("sort_order", "code")
     if q:
         qs = qs.filter(code__icontains=q) | qs.filter(display_name__icontains=q)
-    return render(request, "publisher/triggercluster_list.html", {"rows": qs, "q": q})
+    return render(request, "publisher/cluster_list.html", {"rows": qs, "q": q})
 
 
 @staff_member_required
-def triggercluster_create(request):
+def cluster_create(request):
     if request.method == "POST":
-        form = TriggerClusterForm(request.POST)
-        if form.is_valid():
-            obj = form.save()
-            messages.success(request, "Trigger cluster created.")
-            return redirect("publisher:triggercluster_edit", pk=obj.pk)
-    else:
-        form = TriggerClusterForm()
-    return render(
-        request,
-        "publisher/triggercluster_form.html",
-        {"form": form, "is_new": True},
-    )
-
-
-@staff_member_required
-def triggercluster_edit(request, pk: int):
-    obj = get_object_or_404(TriggerCluster, pk=pk)
-    if request.method == "POST":
-        form = TriggerClusterForm(request.POST, instance=obj)
+        form = VideoClusterForm(request.POST)
         if form.is_valid():
             form.save()
-            messages.success(request, "Trigger cluster saved.")
-            return redirect("publisher:triggercluster_edit", pk=obj.pk)
+            messages.success(request, "Cluster created.")
+            return redirect("publisher:cluster_list")
     else:
-        form = TriggerClusterForm(instance=obj)
-    return render(
-        request,
-        "publisher/triggercluster_form.html",
-        {"form": form, "is_new": False, "obj": obj},
-    )
+        form = VideoClusterForm()
+    return render(request, "publisher/cluster_form.html", {"form": form, "page_title": "Add Cluster"})
 
 
-# -----------------------------
-# Triggers
-# -----------------------------
+@staff_member_required
+def cluster_edit(request, pk):
+    obj = get_object_or_404(VideoCluster, pk=pk)
+    if request.method == "POST":
+        form = VideoClusterForm(request.POST, instance=obj)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Cluster updated.")
+            return redirect("publisher:cluster_list")
+    else:
+        form = VideoClusterForm(instance=obj)
+    return render(request, "publisher/cluster_form.html", {"form": form, "page_title": "Edit Cluster"})
+
+
+@staff_member_required
+def cluster_delete(request, pk):
+    obj = get_object_or_404(VideoCluster, pk=pk)
+    if request.method == "POST":
+        obj.delete()
+        messages.success(request, "Cluster deleted.")
+        return redirect("publisher:cluster_list")
+    return render(request, "publisher/confirm_delete.html", {"object": obj, "cancel_url": "publisher:cluster_list"})
+
+
+# -------------------------------
+# Videos CRUD
+# -------------------------------
+
+@staff_member_required
+def video_list(request):
+    q = request.GET.get("q", "").strip()
+    qs = Video.objects.all().order_by("sort_order", "code")
+    if q:
+        qs = qs.filter(code__icontains=q)
+    return render(request, "publisher/video_list.html", {"rows": qs, "q": q})
+
+
+@staff_member_required
+def video_create(request):
+    FormSet = make_video_language_formset(extra=8)
+
+    if request.method == "POST":
+        form = VideoForm(request.POST)
+        formset = FormSet(request.POST)
+        if form.is_valid() and formset.is_valid():
+            with transaction.atomic():
+                video = form.save()
+                formset.instance = video
+                formset.save()
+            messages.success(request, "Video created.")
+            return redirect("publisher:video_list")
+    else:
+        form = VideoForm()
+        initial = [{"language_code": code} for code in ["en", "hi", "te", "ml", "mr", "kn", "ta", "bn"]]
+        formset = FormSet(initial=initial)
+
+    return render(request, "publisher/video_form.html", {
+        "form": form,
+        "formset": formset,
+        "page_title": "Add Video",
+    })
+
+
+@staff_member_required
+def video_edit(request, pk):
+    video = get_object_or_404(Video, pk=pk)
+    existing = {vl.language_code: vl for vl in VideoLanguage.objects.filter(video=video)}
+    missing = [code for code in ["en", "hi", "te", "ml", "mr", "kn", "ta", "bn"] if code not in existing]
+
+    FormSet = make_video_language_formset(extra=len(missing))
+
+    if request.method == "POST":
+        form = VideoForm(request.POST, instance=video)
+        formset = FormSet(request.POST, instance=video)
+        if form.is_valid() and formset.is_valid():
+            with transaction.atomic():
+                form.save()
+                formset.save()
+            messages.success(request, "Video updated.")
+            return redirect("publisher:video_list")
+    else:
+        form = VideoForm(instance=video)
+        initial = [{"language_code": code} for code in missing]
+        formset = FormSet(instance=video, initial=initial)
+
+    return render(request, "publisher/video_form.html", {
+        "form": form,
+        "formset": formset,
+        "page_title": "Edit Video",
+    })
+
+
+@staff_member_required
+def video_delete(request, pk):
+    obj = get_object_or_404(Video, pk=pk)
+    if request.method == "POST":
+        obj.delete()
+        messages.success(request, "Video deleted.")
+        return redirect("publisher:video_list")
+    return render(request, "publisher/confirm_delete.html", {"object": obj, "cancel_url": "publisher:video_list"})
+
+
+# -------------------------------
+# Triggers CRUD
+# -------------------------------
 
 @staff_member_required
 def trigger_list(request):
-    q = (request.GET.get("q") or "").strip()
-    qs = Trigger.objects.select_related("cluster", "primary_therapy").all().order_by("code")
+    q = request.GET.get("q", "").strip()
+    qs = Trigger.objects.select_related("primary_therapy").all().order_by("sort_order", "display_name")
     if q:
-        qs = qs.filter(code__icontains=q) | qs.filter(search_keywords__icontains=q)
+        qs = qs.filter(display_name__icontains=q)
     return render(request, "publisher/trigger_list.html", {"rows": qs, "q": q})
 
 
@@ -139,247 +221,83 @@ def trigger_create(request):
     if request.method == "POST":
         form = TriggerForm(request.POST)
         if form.is_valid():
-            obj = form.save()
+            form.save()
             messages.success(request, "Trigger created.")
-            return redirect("publisher:trigger_edit", pk=obj.pk)
+            return redirect("publisher:trigger_list")
     else:
         form = TriggerForm()
-    return render(request, "publisher/trigger_form.html", {"form": form, "is_new": True})
+    return render(request, "publisher/trigger_form.html", {"form": form, "page_title": "Add Trigger"})
 
 
 @staff_member_required
-def trigger_edit(request, pk: int):
+def trigger_edit(request, pk):
     obj = get_object_or_404(Trigger, pk=pk)
     if request.method == "POST":
         form = TriggerForm(request.POST, instance=obj)
         if form.is_valid():
             form.save()
-            messages.success(request, "Trigger saved.")
-            return redirect("publisher:trigger_edit", pk=obj.pk)
+            messages.success(request, "Trigger updated.")
+            return redirect("publisher:trigger_list")
     else:
         form = TriggerForm(instance=obj)
-    return render(
-        request,
-        "publisher/trigger_form.html",
-        {"form": form, "is_new": False, "obj": obj},
-    )
+    return render(request, "publisher/trigger_form.html", {"form": form, "page_title": "Edit Trigger"})
 
-
-# -----------------------------
-# Videos
-# -----------------------------
 
 @staff_member_required
-def video_list(request):
-    q = (request.GET.get("q") or "").strip()
-    qs = Video.objects.prefetch_related("langs").all().order_by("code")
+def trigger_delete(request, pk):
+    obj = get_object_or_404(Trigger, pk=pk)
+    if request.method == "POST":
+        obj.delete()
+        messages.success(request, "Trigger deleted.")
+        return redirect("publisher:trigger_list")
+    return render(request, "publisher/confirm_delete.html", {"object": obj, "cancel_url": "publisher:trigger_list"})
+
+
+# -------------------------------
+# Trigger Clusters CRUD
+# -------------------------------
+
+@staff_member_required
+def trigger_cluster_list(request):
+    q = request.GET.get("q", "").strip()
+    qs = TriggerCluster.objects.all().order_by("sort_order", "display_name")
     if q:
-        qs = qs.filter(code__icontains=q) | qs.filter(search_keywords__icontains=q)
-
-    rows = []
-    for v in qs:
-        en = next((l.title for l in v.langs.all() if l.language_code == "en"), "")
-        rows.append({"obj": v, "title": en})
-
-    return render(request, "publisher/video_list.html", {"rows": rows, "q": q})
+        qs = qs.filter(display_name__icontains=q)
+    return render(request, "publisher/trigger_cluster_list.html", {"rows": qs, "q": q})
 
 
 @staff_member_required
-def video_create(request):
-    FormSet = make_video_language_formset(extra=len(LANGUAGE_CODES))
-    video = Video()
-
+def trigger_cluster_create(request):
     if request.method == "POST":
-        form = VideoForm(request.POST, instance=video)
-        formset = FormSet(request.POST, instance=video)
-        if form.is_valid() and formset.is_valid():
-            v = form.save()
-            formset.instance = v
-            formset.save()
-            messages.success(request, "Video created.")
-            return redirect("publisher:video_edit", pk=v.pk)
-    else:
-        form = VideoForm(instance=video)
-        initial = [{"language_code": c} for c in LANGUAGE_CODES]
-        formset = FormSet(instance=video, initial=initial)
-
-    return render(request, "publisher/video_form.html", {"form": form, "formset": formset, "is_new": True})
-
-
-@staff_member_required
-def video_edit(request, pk: int):
-    video = get_object_or_404(Video.objects.prefetch_related("langs"), pk=pk)
-
-    existing = {l.language_code for l in video.langs.all()}
-    missing = [c for c in LANGUAGE_CODES if c not in existing]
-
-    FormSet = make_video_language_formset(extra=len(missing))
-    if request.method == "POST":
-        form = VideoForm(request.POST, instance=video)
-        formset = FormSet(
-            request.POST,
-            instance=video,
-            initial=[{"language_code": c} for c in missing],
-        )
-        if form.is_valid() and formset.is_valid():
-            form.save()
-            formset.save()
-            messages.success(request, "Video saved.")
-            return redirect("publisher:video_edit", pk=video.pk)
-    else:
-        form = VideoForm(instance=video)
-        formset = FormSet(instance=video, initial=[{"language_code": c} for c in missing])
-
-    return render(
-        request,
-        "publisher/video_form.html",
-        {"form": form, "formset": formset, "is_new": False, "video": video},
-    )
-
-
-# -----------------------------
-# Bundles (Video Clusters)
-# -----------------------------
-
-@staff_member_required
-def cluster_list(request):
-    q = (request.GET.get("q") or "").strip()
-    qs = (
-        VideoCluster.objects
-        .prefetch_related("langs")
-        .select_related("trigger")
-        .all()
-        .order_by("sort_order", "code")
-    )
-    if q:
-        qs = qs.filter(code__icontains=q) | qs.filter(search_keywords__icontains=q)
-
-    rows = []
-    for c in qs:
-        en = next((l.name for l in c.langs.all() if l.language_code == "en"), "")
-        rows.append({"obj": c, "name": en, "trigger": c.trigger})
-
-    return render(request, "publisher/cluster_list.html", {"rows": rows, "q": q})
-
-
-@staff_member_required
-def cluster_create(request):
-    LangFS = make_cluster_language_formset(extra=len(LANGUAGE_CODES))
-    VidFS = make_cluster_video_formset(extra=5)
-    cluster = VideoCluster()
-
-    if request.method == "POST":
-        form = VideoClusterForm(request.POST, instance=cluster)
-        lang_fs = LangFS(request.POST, instance=cluster)
-        vid_fs = VidFS(request.POST, instance=cluster)
-        if form.is_valid() and lang_fs.is_valid() and vid_fs.is_valid():
-            c = form.save()
-            lang_fs.instance = c
-            vid_fs.instance = c
-            lang_fs.save()
-            vid_fs.save()
-            messages.success(request, "Bundle created.")
-            return redirect("publisher:cluster_edit", pk=c.pk)
-    else:
-        form = VideoClusterForm(instance=cluster)
-        lang_fs = LangFS(instance=cluster, initial=[{"language_code": c} for c in LANGUAGE_CODES])
-        vid_fs = VidFS(instance=cluster)
-
-    return render(
-        request,
-        "publisher/cluster_form.html",
-        {"form": form, "lang_fs": lang_fs, "vid_fs": vid_fs, "is_new": True},
-    )
-
-
-@staff_member_required
-def cluster_edit(request, pk: int):
-    cluster = get_object_or_404(
-        VideoCluster.objects
-        .select_related("trigger")
-        .prefetch_related("langs", "cluster_videos"),
-        pk=pk,
-    )
-
-    existing = {l.language_code for l in cluster.langs.all()}
-    missing = [c for c in LANGUAGE_CODES if c not in existing]
-
-    LangFS = make_cluster_language_formset(extra=len(missing))
-    VidFS = make_cluster_video_formset(extra=3)
-
-    if request.method == "POST":
-        form = VideoClusterForm(request.POST, instance=cluster)
-        lang_fs = LangFS(
-            request.POST,
-            instance=cluster,
-            initial=[{"language_code": c} for c in missing],
-        )
-        vid_fs = VidFS(request.POST, instance=cluster)
-        if form.is_valid() and lang_fs.is_valid() and vid_fs.is_valid():
-            form.save()
-            lang_fs.save()
-            vid_fs.save()
-            messages.success(request, "Bundle saved.")
-            return redirect("publisher:cluster_edit", pk=cluster.pk)
-    else:
-        form = VideoClusterForm(instance=cluster)
-        lang_fs = LangFS(instance=cluster, initial=[{"language_code": c} for c in missing])
-        vid_fs = VidFS(instance=cluster)
-
-    return render(
-        request,
-        "publisher/cluster_form.html",
-        {
-            "form": form,
-            "lang_fs": lang_fs,
-            "vid_fs": vid_fs,
-            "is_new": False,
-            "cluster": cluster,
-        },
-    )
-
-
-# -----------------------------
-# Trigger Maps
-# -----------------------------
-
-@staff_member_required
-def map_list(request):
-    q = (request.GET.get("q") or "").strip()
-    qs = VideoTriggerMap.objects.select_related("trigger", "video").all().order_by(
-        "trigger__code", "sort_order"
-    )
-    if q:
-        qs = qs.filter(trigger__code__icontains=q) | qs.filter(video__code__icontains=q)
-    return render(request, "publisher/map_list.html", {"rows": qs, "q": q})
-
-
-@staff_member_required
-def map_create(request):
-    if request.method == "POST":
-        form = VideoTriggerMapForm(request.POST)
-        if form.is_valid():
-            m = form.save()
-            messages.success(request, "Trigger map created.")
-            return redirect("publisher:map_edit", pk=m.pk)
-    else:
-        form = VideoTriggerMapForm()
-    return render(request, "publisher/map_form.html", {"form": form, "is_new": True})
-
-
-@staff_member_required
-def map_edit(request, pk: int):
-    obj = get_object_or_404(VideoTriggerMap, pk=pk)
-    if request.method == "POST":
-        form = VideoTriggerMapForm(request.POST, instance=obj)
+        form = TriggerClusterForm(request.POST)
         if form.is_valid():
             form.save()
-            messages.success(request, "Trigger map saved.")
-            return redirect("publisher:map_edit", pk=obj.pk)
+            messages.success(request, "Trigger cluster created.")
+            return redirect("publisher:trigger_cluster_list")
     else:
-        form = VideoTriggerMapForm(instance=obj)
-    return render(
-        request,
-        "publisher/map_form.html",
-        {"form": form, "is_new": False, "obj": obj},
-    )
+        form = TriggerClusterForm()
+    return render(request, "publisher/trigger_cluster_form.html", {"form": form, "page_title": "Add Trigger Cluster"})
+
+
+@staff_member_required
+def trigger_cluster_edit(request, pk):
+    obj = get_object_or_404(TriggerCluster, pk=pk)
+    if request.method == "POST":
+        form = TriggerClusterForm(request.POST, instance=obj)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Trigger cluster updated.")
+            return redirect("publisher:trigger_cluster_list")
+    else:
+        form = TriggerClusterForm(instance=obj)
+    return render(request, "publisher/trigger_cluster_form.html", {"form": form, "page_title": "Edit Trigger Cluster"})
+
+
+@staff_member_required
+def trigger_cluster_delete(request, pk):
+    obj = get_object_or_404(TriggerCluster, pk=pk)
+    if request.method == "POST":
+        obj.delete()
+        messages.success(request, "Trigger cluster deleted.")
+        return redirect("publisher:trigger_cluster_list")
+    return render(request, "publisher/confirm_delete.html", {"object": obj, "cancel_url": "publisher:trigger_cluster_list"})
