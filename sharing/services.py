@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from django.conf import settings
 from django.core.cache import cache
@@ -36,12 +36,10 @@ def _video_cluster_id(vc: VideoCluster) -> str:
     return str(vc.pk)
 
 
-def build_whatsapp_message_prefixes() -> Dict[str, str]:
+def build_whatsapp_message_prefixes(_doctor_name: str | None = None) -> Dict[str, str]:
     """
-    sharing/views.py imports this.
-    Keep it simple and safe:
-    - Provide at least English
-    - Optionally extend based on settings.LANGUAGES if present
+    IMPORTANT: sharing/views.py calls this as build_whatsapp_message_prefixes(request.user.full_name).
+    So this must accept one positional argument (doctor name), even if we don't use it.
     """
     prefixes: Dict[str, str] = {"en": "Please see: "}
     langs = getattr(settings, "LANGUAGES", None)
@@ -58,7 +56,6 @@ def _build_catalog_payload() -> Dict[str, Any]:
     Must be backward compatible with older DB schemas.
     """
     # Trigger clusters
-    # Some schemas may not have sort_order; order by id as fallback.
     tc_qs = TriggerCluster.objects.all()
     try:
         tc_qs = tc_qs.order_by("sort_order", "id")
@@ -111,9 +108,7 @@ def _build_catalog_payload() -> Dict[str, Any]:
                 titles[lang.language_code] = _safe_str(lang.title)
                 urls[lang.language_code] = _safe_str(lang.youtube_url)
         except Exception:
-            # Fallback: old schema may not have languages table
             titles["en"] = _safe_str(getattr(v, "code", "") or "Video")
-            # If you don’t have youtube_url per language, keep blank; UI will still render.
             urls["en"] = ""
 
         videos_payload.append(
@@ -130,7 +125,7 @@ def _build_catalog_payload() -> Dict[str, Any]:
     payload = {
         "clusters": clusters_payload,
         "videos": videos_payload,
-        "message_prefixes": build_whatsapp_message_prefixes(),
+        "message_prefixes": build_whatsapp_message_prefixes(None),
     }
     return payload
 
