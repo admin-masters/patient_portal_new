@@ -25,13 +25,17 @@ def doctor_share(request: HttpRequest, doctor_id: str) -> HttpResponse:
     if not doctor or doctor.doctor_id != doctor_id:
         return HttpResponseForbidden("Not allowed")
 
+    # Force refresh once to avoid stale/empty cache during development.
     catalog_json = get_catalog_json_cached(force_refresh=True)
 
-    # Make message prefixes doctor-specific (template uses catalog.message_prefixes)
-    catalog_json = {
-        **catalog_json,
-        "message_prefixes": build_whatsapp_message_prefixes(doctor.full_name),
-    }
+    # ✅ DoctorProfile has no full_name. Name lives on the related User.
+    doctor_name = ""
+    try:
+        doctor_name = (doctor.user.full_name or "").strip()
+    except Exception:
+        doctor_name = (request.user.full_name or "").strip()
+
+    message_prefixes = build_whatsapp_message_prefixes(doctor_name)
 
     return render(
         request,
@@ -39,6 +43,7 @@ def doctor_share(request: HttpRequest, doctor_id: str) -> HttpResponse:
         {
             "doctor": doctor,
             "catalog_json": catalog_json,
+            "message_prefixes": message_prefixes,
             "languages": LANGUAGES,
         },
     )
@@ -73,21 +78,12 @@ def patient_video(request: HttpRequest, doctor_id: str, video_code: str) -> Http
 
 
 def patient_cluster(request: HttpRequest, doctor_id: str, cluster_code: str) -> HttpResponse:
-    """
-    Required because sharing/urls.py references this view.
-    Shows a simple cluster landing page listing videos in a VideoCluster.
-
-    cluster_code is treated as:
-      - VideoCluster.code if present
-      - otherwise as numeric PK string
-    """
     doctor = get_object_or_404(DoctorProfile.objects.select_related("clinic", "user"), doctor_id=doctor_id)
 
     lang = request.GET.get("lang", "en")
     if lang not in LANGUAGE_CODES:
         lang = "en"
 
-    # Resolve cluster by code or pk
     cluster = None
     try:
         cluster = VideoCluster.objects.filter(code=cluster_code).first()
@@ -97,16 +93,13 @@ def patient_cluster(request: HttpRequest, doctor_id: str, cluster_code: str) -> 
     if cluster is None and cluster_code.isdigit():
         cluster = get_object_or_404(VideoCluster, pk=int(cluster_code))
     elif cluster is None:
-        # Hard 404 if neither matched
         cluster = get_object_or_404(VideoCluster, pk=-1)
 
-    # Fetch videos in this cluster (if M2M exists)
     try:
         videos = cluster.videos.all().order_by("sort_order", "id")
     except Exception:
         videos = cluster.videos.all().order_by("id")
 
-    # Build language-specific title/url
     items = []
     for v in videos:
         vlang = (
