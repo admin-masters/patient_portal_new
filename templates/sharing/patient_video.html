@@ -7,15 +7,16 @@
   <div style="display: flex; align-items: center; gap: 12px;">
     {% if doctor.photo %}
       <img src="{{ doctor.photo.url }}" alt="Doctor photo"
-           style="width: 64px; height: 64px; border-radius: 16px; object-fit: cover;" />
+           style="width: 64px; height: 64px; border-radius: 16px; object-fit: cover; border: 1px solid #e6e6e6;" />
     {% endif %}
     <div>
       <div><strong>Dr. {{ doctor.user.full_name }}</strong></div>
-      <div class="muted">{{ clinic.state }}</div>
+      <div class="muted">{{ clinic.display_name }}</div>
+      <div class="muted">{{ clinic.state }}{% if clinic.postal_code %} — {{ clinic.postal_code }}{% endif %}</div>
     </div>
   </div>
 
-  <div style="margin-top: 14px;" class="row two">
+  <div style="margin-top: 12px;" class="row two">
     <div>
       <label for="lang">Language</label>
       <select id="lang">
@@ -30,84 +31,68 @@
 
   <div style="margin-top: 14px;">
     {% if vlang and vlang.youtube_url %}
-      <div style="position: relative; padding-top: 56.25%;">
-        <iframe
-          id="yt-player"
-          data-youtube-url="{{ vlang.youtube_url }}"
-          title="YouTube video player"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowfullscreen
-          referrerpolicy="strict-origin-when-cross-origin"
-          style="position:absolute; top:0; left:0; width:100%; height:100%; border:0; border-radius:12px;">
-        </iframe>
+      <div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 12px; border: 1px solid #e6e6e6;">
+        <iframe id="yt-player"
+                data-youtube-url="{{ vlang.youtube_url }}"
+                style="position: absolute; top:0; left:0; width:100%; height:100%; border:0;"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowfullscreen></iframe>
 
         <div id="yt-fallback"
-             style="display:none; position:absolute; inset:0;
-                    background:#111; color:#fff;
-                    align-items:center; justify-content:center;
-                    text-align:center; border-radius:12px;">
-          <div>
-            <div style="font-size:18px; margin-bottom:8px;">Video unavailable</div>
-            <a id="yt-fallback-link"
-               href="{{ vlang.youtube_url }}"
-               target="_blank"
-               style="color:#4ea3ff; font-weight:600;">
-              Open on YouTube
-            </a>
-          </div>
+             style="display:none; align-items:center; justify-content:space-between; gap:10px; padding:12px; background:#f8fafc; height:100%;">
+          <div class="muted">Unable to embed this video.</div>
+          <a id="yt-fallback-link" href="{{ vlang.youtube_url }}" target="_blank" style="font-weight:700;">
+            Open on YouTube
+          </a>
         </div>
       </div>
     {% else %}
-      <div style="padding:16px; background:#f5f5f5; border-radius:8px;">
+      <div style="padding:12px; background:#f5f5f5; border-radius:10px;">
         Video will be available soon.
       </div>
     {% endif %}
 
     {% if vlang %}
-      <div style="margin-top: 10px; font-weight: 700;">{{ vlang.title }}</div>
+      <div style="margin-top: 10px; font-weight: 800;">{{ vlang.title }}</div>
     {% endif %}
+  </div>
+
+  <div style="margin-top: 14px;" class="muted">
+    {{ clinic.address_text|linebreaksbr }}
+    <div style="margin-top: 6px;">
+      Clinic phone: {{ clinic.clinic_phone }}
+      {% if clinic.clinic_whatsapp_number %} · WhatsApp: {{ clinic.clinic_whatsapp_number }}{% endif %}
+    </div>
   </div>
 </div>
 
 <script>
 (function () {
-  const iframe = document.getElementById('yt-player');
-  const fallback = document.getElementById('yt-fallback');
-  const link = document.getElementById('yt-fallback-link');
-
+  const iframe = document.getElementById("yt-player");
+  const fallback = document.getElementById("yt-fallback");
   if (!iframe) return;
 
   const rawUrl = iframe.dataset.youtubeUrl || "";
-
   const match = rawUrl.match(
     /(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)([A-Za-z0-9_-]{11})/
   );
 
   if (!match) {
     iframe.style.display = "none";
-    fallback.style.display = "flex";
-    return;
+    if (fallback) fallback.style.display = "flex";
+  } else {
+    iframe.src = "https://www.youtube.com/embed/" + match[1];
+    iframe.addEventListener("error", () => {
+      iframe.style.display = "none";
+      if (fallback) fallback.style.display = "flex";
+    });
   }
 
-  const videoId = match[1];
-  iframe.src = "https://www.youtube.com/embed/" + videoId;
-
-  if (link) {
-    link.href = "https://www.youtube.com/watch?v=" + videoId;
-  }
-
-  iframe.addEventListener("error", () => {
-    iframe.style.display = "none";
-    fallback.style.display = "flex";
-  });
-})();
-</script>
-
-<script>
-  document.getElementById('lang').addEventListener('change', function () {
+  document.getElementById("lang").addEventListener("change", function () {
     const url = new URL(window.location.href);
-    url.searchParams.set('lang', this.value);
+    url.searchParams.set("lang", this.value);
     window.location.href = url.toString();
   });
+})();
 </script>
 {% endblock %}
