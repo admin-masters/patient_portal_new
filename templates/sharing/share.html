@@ -1,42 +1,163 @@
 {% extends "base.html" %}
-{% block title %}Doctor Share{% endblock %}
-{% block header_title %}Doctor Share{% endblock %}
+{% block title %}{{ doctor.clinic.display_name }} — Share Patient Education{% endblock %}
+{% block header_title %}{{ doctor.clinic.display_name }}{% endblock %}
+
+{% block head %}
+<style>
+  /* Local page styles (kept in-template to avoid affecting other pages) */
+  .profile-row { display: flex; align-items: center; gap: 12px; }
+  .profile-photo { width: 72px; height: 72px; border-radius: 18px; object-fit: cover; border: 1px solid #e6e6e6; background: #fff; }
+  .kv { margin: 6px 0; }
+  .kv b { display: inline-block; min-width: 120px; }
+
+  /* Make 3-column filters on larger screens */
+  @media (min-width: 760px) {
+    .row.three { grid-template-columns: 1fr 1fr 1fr; }
+  }
+
+  /* Form controls */
+  select, input[type="text"], input[type="tel"] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: #fff;
+    color: #111827;
+    box-sizing: border-box;
+  }
+  select option {
+    color: #111827;
+    background: #fff;
+  }
+
+  /* Buttons */
+  .btn, button {
+    display: inline-block;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    border: 1px solid transparent;
+    text-decoration: none;
+  }
+  button {
+    background: #111827;
+    color: #fff;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-secondary {
+    background: #fff;
+    color: #111827;
+    border-color: #d1d5db;
+  }
+  .btn-secondary:hover { border-color: #9ca3af; }
+
+  .hint { color: #6b7280; font-size: 13px; margin-top: 8px; }
+  .section-title { margin: 0 0 8px 0; }
+
+  .video-list {
+    margin-top: 12px;
+    border: 1px solid #e6e6e6;
+    border-radius: 12px;
+    background: #fff;
+    max-height: 360px;
+    overflow: auto;
+  }
+  .video-item {
+    padding: 10px 12px;
+    border-bottom: 1px solid #f1f5f9;
+    cursor: pointer;
+  }
+  .video-item:last-child { border-bottom: 0; }
+  .video-item.active { background: #eff6ff; }
+
+  .toolbar {
+    margin-top: 12px;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+  .toolbar .grow { flex: 1; min-width: 220px; }
+
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .actions .btn { min-width: 140px; }
+
+  .prominent-footer {
+    margin-top: 14px;
+  }
+  .prominent-footer .btn {
+    width: 100%;
+  }
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="card">
-  <h3>Doctor</h3>
-  <p><b>{{ doctor.user.full_name }}</b></p>
-  <p class="muted">Doctor ID: {{ doctor.doctor_id }}</p>
+  <h3 class="section-title">Doctor</h3>
+
+  <div class="profile-row">
+    {% if doctor.photo %}
+      <img class="profile-photo" src="{{ doctor.photo.url }}" alt="Doctor photo" />
+    {% endif %}
+    <div>
+      <div style="font-size: 18px; font-weight: 800;">Dr. {{ doctor.user.full_name }}</div>
+      <div class="muted">{{ doctor.clinic.display_name }}</div>
+      <div class="muted">Doctor ID: {{ doctor.doctor_id }}</div>
+    </div>
+  </div>
+
+  <div class="row two" style="margin-top: 12px;">
+    <div>
+      <div class="kv"><b>Doctor WhatsApp</b> {{ doctor.whatsapp_number }}</div>
+      <div class="kv"><b>IMC / Reg.</b> {{ doctor.imc_number }}</div>
+    </div>
+    <div>
+      <div class="kv"><b>Clinic phone</b> {{ doctor.clinic.clinic_phone }}</div>
+      {% if doctor.clinic.clinic_whatsapp_number %}
+        <div class="kv"><b>Clinic WhatsApp</b> {{ doctor.clinic.clinic_whatsapp_number }}</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="muted" style="margin-top: 10px;">
+    {{ doctor.clinic.address_text|linebreaksbr }}<br>
+    {{ doctor.clinic.state }}{% if doctor.clinic.postal_code %} — {{ doctor.clinic.postal_code }}{% endif %}
+  </div>
 </div>
 
 <div class="card">
-  <h3>Share Patient Education</h3>
+  <h3 class="section-title">Share Patient Education</h3>
 
-  <div class="row three">
+  <div class="row three" style="margin-top: 6px;">
     <div>
-      <label>Therapy Area</label>
+      <label for="therapySel">Therapy Area</label>
       <select id="therapySel"></select>
     </div>
 
     <div>
-      <label>Topic</label>
+      <label for="topicSel">Topic</label>
       <select id="topicSel"></select>
     </div>
 
     <div>
-      <label>Bundle</label>
+      <label for="bundleSel">Bundle</label>
       <select id="bundleSel"></select>
     </div>
   </div>
 
-  <div class="row two" style="margin-top:12px;">
-    <div>
-      <label>Search videos</label>
-      <input id="searchBox" type="text" placeholder="Search videos…">
+  <div class="toolbar">
+    <div class="grow">
+      <label for="searchBox">Search</label>
+      <input id="searchBox" type="text" placeholder="Search by title, keyword, bundle name…" autocomplete="off" />
     </div>
 
-    <div>
-      <label>Language</label>
+    <div style="min-width: 220px;">
+      <label for="lang">Language</label>
       <select id="lang">
         {% for code, name in languages %}
           <option value="{{ code }}">{{ name }}</option>
@@ -45,14 +166,31 @@
     </div>
   </div>
 
-  <div id="videoList" style="margin-top:12px;"></div>
+  <div id="contextHint" class="hint"></div>
 
-  <div class="sticky-share">
-    <label>WhatsApp number</label>
-    <input id="waNumber" type="tel" maxlength="10" placeholder="10-digit number">
+  <div id="videoList" class="video-list"></div>
 
-    <button id="shareVideoBtn" disabled>Share Video</button>
-    <button id="shareBundleBtn" disabled>Share Bundle</button>
+  <div class="toolbar">
+    <div class="grow">
+      <label for="waNumber">Patient WhatsApp number</label>
+      <input id="waNumber" type="tel" maxlength="10" placeholder="10-digit number" inputmode="numeric" />
+      <div class="hint">Enter the patient's 10-digit WhatsApp number (India).</div>
+    </div>
+
+    <div class="actions">
+      <button class="btn" id="shareVideoBtn" style="display:none;">Share Video</button>
+      <button class="btn" id="shareBundleBtn" style="display:none;">Share Bundle</button>
+    </div>
+  </div>
+
+  <div class="hint">
+    Tip: Select a bundle to list its videos. Click a video to share only that video.
+  </div>
+
+  <div class="prominent-footer">
+    <a class="btn btn-secondary" href="{% url 'accounts:modify_clinic_details' doctor_id=doctor.doctor_id %}">
+      Modify Clinic Details
+    </a>
   </div>
 </div>
 
@@ -64,38 +202,84 @@ const catalog = JSON.parse(document.getElementById("catalog-json").textContent);
 const therapySel = document.getElementById("therapySel");
 const topicSel = document.getElementById("topicSel");
 const bundleSel = document.getElementById("bundleSel");
-const videoList = document.getElementById("videoList");
 const searchBox = document.getElementById("searchBox");
 const langSel = document.getElementById("lang");
+
+const videoList = document.getElementById("videoList");
+const contextHint = document.getElementById("contextHint");
+
 const waNumber = document.getElementById("waNumber");
 const shareVideoBtn = document.getElementById("shareVideoBtn");
 const shareBundleBtn = document.getElementById("shareBundleBtn");
 
 let activeVideo = null;
 
+// -------------------- helpers --------------------
 function validWA() {
-  return /^\d{10}$/.test(waNumber.value);
+  return /^\d{10}$/.test((waNumber.value || "").trim());
 }
 
-function populateSelect(el, items, labelFn) {
-  el.innerHTML = `<option value="">-- All --</option>`;
-  items.forEach(i => {
+const bundleByCode = {};
+(catalog.bundles || []).forEach(b => { bundleByCode[b.code] = b; });
+
+function bundleLabel(b, lang) {
+  if (!b) return "";
+  const names = b.names || {};
+  return (names[lang] || names["en"] || b.display_name || b.code || "").trim();
+}
+
+function bundleLabelByCode(code, lang) {
+  return bundleLabel(bundleByCode[code], lang) || code;
+}
+
+function populateSelect(el, items, labelFn, includeAll=true) {
+  el.innerHTML = "";
+  if (includeAll) {
+    const allOpt = document.createElement("option");
+    allOpt.value = "";
+    allOpt.textContent = "-- All --";
+    el.appendChild(allOpt);
+  }
+  (items || []).forEach(i => {
     const o = document.createElement("option");
     o.value = i.code;
-    o.textContent = labelFn(i);
+    o.textContent = (labelFn(i) || i.code || "").trim();
     el.appendChild(o);
   });
 }
 
+function repopulateBundleSelect(preserveValue=true) {
+  const current = preserveValue ? bundleSel.value : "";
+  populateSelect(bundleSel, catalog.bundles, b => bundleLabel(b, langSel.value));
+  if (preserveValue && current) {
+    bundleSel.value = current;
+  }
+}
+
 populateSelect(therapySel, catalog.therapy_areas, t => t.display_name);
 populateSelect(topicSel, catalog.topics, t => t.display_name);
-populateSelect(bundleSel, catalog.bundles, b => b.display_name);
+repopulateBundleSelect(false);
+
+function clearVideoSelection() {
+  activeVideo = null;
+}
 
 function filteredVideos() {
-  const q = searchBox.value.toLowerCase();
-  return catalog.videos.filter(v => {
-    if (bundleSel.value && !v.bundle_codes.includes(bundleSel.value)) return false;
-    if (q && !v.search_text.includes(q)) return false;
+  const q = (searchBox.value || "").toLowerCase().trim();
+  const bundle = (bundleSel.value || "").trim();
+  const therapy = (therapySel.value || "").trim();
+  const topic = (topicSel.value || "").trim();
+
+  return (catalog.videos || []).filter(v => {
+    // Bundle selection should show ALL videos in that bundle (ignore therapy/topic)
+    if (bundle) {
+      if (!Array.isArray(v.bundle_codes) || !v.bundle_codes.includes(bundle)) return false;
+    } else {
+      if (therapy && (!Array.isArray(v.therapy_codes) || !v.therapy_codes.includes(therapy))) return false;
+      if (topic && (!Array.isArray(v.topic_codes) || !v.topic_codes.includes(topic))) return false;
+    }
+
+    if (q && !(v.search_text || "").includes(q)) return false;
     return true;
   });
 }
@@ -103,50 +287,164 @@ function filteredVideos() {
 function renderVideos() {
   const lang = langSel.value;
   const vids = filteredVideos();
+
+  // If the selected video is no longer in the filtered list, clear it
+  if (activeVideo && !vids.some(v => v.id === activeVideo.id)) {
+    activeVideo = null;
+  }
+
   videoList.innerHTML = "";
+
+  if (!vids.length) {
+    const empty = document.createElement("div");
+    empty.className = "video-item";
+    empty.style.cursor = "default";
+    empty.innerHTML = `<span class="muted">No videos found for the current filters.</span>`;
+    videoList.appendChild(empty);
+    return;
+  }
 
   vids.forEach(v => {
     const d = document.createElement("div");
-    d.className = "video-item" + (activeVideo === v ? " active" : "");
-    d.innerHTML = `<b>${v.titles[lang] || v.titles.en}</b>`;
+    d.className = "video-item" + (activeVideo && activeVideo.id === v.id ? " active" : "");
+
+    const title = (v.titles && (v.titles[lang] || v.titles["en"])) || v.id;
+    d.innerHTML = `<div style="font-weight:800;">${escapeHtml(title)}</div>`;
+
     d.onclick = () => {
       activeVideo = v;
-      renderVideos();
       updateButtons();
+      renderVideos();
     };
     videoList.appendChild(d);
   });
 }
 
+function updateContextHint() {
+  const lang = langSel.value;
+  const bundle = (bundleSel.value || "").trim();
+
+  if (activeVideo) {
+    const t = (activeVideo.titles && (activeVideo.titles[lang] || activeVideo.titles["en"])) || activeVideo.id;
+    contextHint.textContent = `Selected video: ${t}`;
+    return;
+  }
+
+  if (bundle) {
+    const bName = bundleLabelByCode(bundle, lang) || bundle;
+    const count = (catalog.videos || []).filter(v => Array.isArray(v.bundle_codes) && v.bundle_codes.includes(bundle)).length;
+    contextHint.textContent = `Bundle selected: ${bName} (${count} video${count === 1 ? "" : "s"}).`;
+    return;
+  }
+
+  contextHint.textContent = "";
+}
+
 function updateButtons() {
-  shareVideoBtn.disabled = !(activeVideo && validWA());
-  shareBundleBtn.disabled = !(bundleSel.value && validWA());
+  const waOk = validWA();
+  const bundle = (bundleSel.value || "").trim();
+
+  // Show exactly one action at a time:
+  // - If a video is selected -> Share Video
+  // - Else if a bundle is selected -> Share Bundle
+  // - Else -> show none
+  if (activeVideo) {
+    shareVideoBtn.style.display = "inline-block";
+    shareBundleBtn.style.display = "none";
+    shareVideoBtn.disabled = !waOk;
+  } else if (bundle) {
+    shareVideoBtn.style.display = "none";
+    shareBundleBtn.style.display = "inline-block";
+    shareBundleBtn.disabled = !waOk;
+  } else {
+    shareVideoBtn.style.display = "none";
+    shareBundleBtn.style.display = "none";
+  }
+
+  updateContextHint();
 }
 
 function buildMessage(link, lang) {
-  const prefix = catalog.message_prefixes[lang] || "";
-  return prefix + link;
+  const prefix = (catalog.message_prefixes && catalog.message_prefixes[lang]) || "";
+  return (prefix || "") + link;
 }
 
+function shareToWhatsApp(message) {
+  const num = (waNumber.value || "").trim();
+  if (!/^\d{10}$/.test(num)) return;
+  window.open(`https://wa.me/91${num}?text=${encodeURIComponent(message)}`);
+}
+
+// Basic HTML escaping for injected content
+function escapeHtml(str) {
+  return String(str || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+// -------------------- actions --------------------
 shareVideoBtn.onclick = () => {
+  if (!activeVideo) return;
   const lang = langSel.value;
   const link = `${location.origin}/p/${catalog.doctor_id}/v/${activeVideo.id}/?lang=${lang}`;
-  window.open(`https://wa.me/91${waNumber.value}?text=${encodeURIComponent(buildMessage(link, lang))}`);
+  shareToWhatsApp(buildMessage(link, lang));
 };
 
 shareBundleBtn.onclick = () => {
+  const bundle = (bundleSel.value || "").trim();
+  if (!bundle) return;
   const lang = langSel.value;
-  const link = `${location.origin}/p/${catalog.doctor_id}/c/${bundleSel.value}/?lang=${lang}`;
-  window.open(`https://wa.me/91${waNumber.value}?text=${encodeURIComponent(buildMessage(link, lang))}`);
+  const link = `${location.origin}/p/${catalog.doctor_id}/c/${bundle}/?lang=${lang}`;
+  shareToWhatsApp(buildMessage(link, lang));
 };
 
-[therapySel, topicSel, bundleSel, searchBox, langSel, waNumber]
-  .forEach(el => el.addEventListener("change", () => {
-    activeVideo = null;
-    renderVideos();
-    updateButtons();
-  }));
+// -------------------- event wiring --------------------
+therapySel.addEventListener("change", () => {
+  // therapy/topic filtering is for the "browse" mode; clear bundle
+  bundleSel.value = "";
+  clearVideoSelection();
+  renderVideos();
+  updateButtons();
+});
 
+topicSel.addEventListener("change", () => {
+  bundleSel.value = "";
+  clearVideoSelection();
+  renderVideos();
+  updateButtons();
+});
+
+bundleSel.addEventListener("change", () => {
+  // selecting a bundle means "show everything in this bundle"
+  therapySel.value = "";
+  topicSel.value = "";
+  clearVideoSelection();
+  renderVideos();
+  updateButtons();
+});
+
+langSel.addEventListener("change", () => {
+  // bundle names are localized, so repopulate bundle dropdown on language change
+  repopulateBundleSelect(true);
+  renderVideos();
+  updateButtons();
+});
+
+searchBox.addEventListener("input", () => {
+  clearVideoSelection();
+  renderVideos();
+  updateButtons();
+});
+
+waNumber.addEventListener("input", () => {
+  updateButtons();
+});
+
+// Initial render
 renderVideos();
+updateButtons();
 </script>
 {% endblock %}
