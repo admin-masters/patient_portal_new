@@ -5,9 +5,16 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
 
-from catalog.models import TherapyArea, Trigger, TriggerCluster, Video, VideoCluster, VideoTriggerMap, VideoClusterVideo
+from catalog.models import (
+    TherapyArea,
+    Trigger,
+    TriggerCluster,
+    Video,
+    VideoCluster,
+    VideoTriggerMap,
+    VideoClusterVideo,
+)
 from publisher.forms import (
     BundleTriggerMapForm,
     TherapyAreaForm,
@@ -34,6 +41,25 @@ def dashboard(request):
 def therapy_list(request):
     items = TherapyArea.objects.all().order_by("display_name", "code")
     return render(request, "publisher/therapy_list.html", {"items": items})
+
+
+@staff_member_required
+def therapy_create(request):
+    """
+    Required by publisher/urls.py:
+      path("therapy-areas/new/", views.therapy_create, name="therapy_create")
+    """
+    if request.method == "POST":
+        form = TherapyAreaForm(request.POST)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Therapy area created.")
+            return redirect("publisher:therapy_list")
+    else:
+        form = TherapyAreaForm()
+
+    # Reuse the same template as edit
+    return render(request, "publisher/therapy_form.html", {"form": form, "object": None})
 
 
 @staff_member_required
@@ -91,7 +117,11 @@ def trigger_cluster_edit(request, pk):
 # ---------------------------
 @staff_member_required
 def trigger_list(request):
-    items = Trigger.objects.select_related("cluster", "primary_therapy").all().order_by("display_name", "code")
+    items = (
+        Trigger.objects.select_related("cluster", "primary_therapy")
+        .all()
+        .order_by("display_name", "code")
+    )
     return render(request, "publisher/trigger_list.html", {"items": items})
 
 
@@ -320,7 +350,11 @@ def map_list(request):
     """
     q = (request.GET.get("q") or "").strip()
 
-    bundles = VideoCluster.objects.select_related("trigger", "trigger__primary_therapy").all().order_by("display_name", "code")
+    bundles = (
+        VideoCluster.objects.select_related("trigger", "trigger__primary_therapy")
+        .all()
+        .order_by("display_name", "code")
+    )
     if q:
         bundles = bundles.filter(
             Q(code__icontains=q)
@@ -384,7 +418,11 @@ def legacy_video_trigger_map_list(request):
     Not linked from the dashboard.
     """
     q = (request.GET.get("q") or "").strip()
-    items = VideoTriggerMap.objects.select_related("trigger", "video").all().order_by("trigger__code", "video__code")
+    items = (
+        VideoTriggerMap.objects.select_related("trigger", "video")
+        .all()
+        .order_by("trigger__code", "video__code")
+    )
 
     if q:
         items = items.filter(Q(video__code__icontains=q) | Q(trigger__code__icontains=q))
