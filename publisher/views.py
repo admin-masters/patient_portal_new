@@ -39,16 +39,15 @@ def dashboard(request):
 # ---------------------------
 @staff_member_required
 def therapy_list(request):
-    items = TherapyArea.objects.all().order_by("display_name", "code")
-    return render(request, "publisher/therapy_list.html", {"items": items})
+    q = (request.GET.get("q") or "").strip()
+    rows = TherapyArea.objects.all().order_by("display_name", "code")
+    if q:
+        rows = rows.filter(Q(code__icontains=q) | Q(display_name__icontains=q))
+    return render(request, "publisher/therapy_list.html", {"rows": rows, "q": q})
 
 
 @staff_member_required
 def therapy_create(request):
-    """
-    Required by publisher/urls.py:
-      path("therapy-areas/new/", views.therapy_create, name="therapy_create")
-    """
     if request.method == "POST":
         form = TherapyAreaForm(request.POST)
         if form.is_valid():
@@ -57,8 +56,6 @@ def therapy_create(request):
             return redirect("publisher:therapy_list")
     else:
         form = TherapyAreaForm()
-
-    # Reuse the same template as edit
     return render(request, "publisher/therapy_form.html", {"form": form, "object": None})
 
 
@@ -81,8 +78,12 @@ def therapy_edit(request, pk):
 # ---------------------------
 @staff_member_required
 def trigger_cluster_list(request):
-    items = TriggerCluster.objects.all().order_by("display_name", "code")
-    return render(request, "publisher/trigger_cluster_list.html", {"items": items})
+    q = (request.GET.get("q") or "").strip()
+    rows = TriggerCluster.objects.all().order_by("display_name", "code")
+    if q:
+        rows = rows.filter(Q(code__icontains=q) | Q(display_name__icontains=q))
+    # NOTE: template for list is publisher/trigger_cluster_list.html which extends triggercluster_list.html
+    return render(request, "publisher/trigger_cluster_list.html", {"rows": rows, "q": q})
 
 
 @staff_member_required
@@ -92,7 +93,7 @@ def trigger_cluster_create(request):
         if form.is_valid():
             form.save()
             messages.success(request, "Trigger cluster created.")
-            return redirect("publisher:trigger_cluster_list")
+            return redirect("publisher:triggercluster_list")
     else:
         form = TriggerClusterForm()
     return render(request, "publisher/triggercluster_form.html", {"form": form, "object": None})
@@ -106,7 +107,7 @@ def trigger_cluster_edit(request, pk):
         if form.is_valid():
             form.save()
             messages.success(request, "Trigger cluster updated.")
-            return redirect("publisher:trigger_cluster_list")
+            return redirect("publisher:triggercluster_list")
     else:
         form = TriggerClusterForm(instance=obj)
     return render(request, "publisher/triggercluster_form.html", {"form": form, "object": obj})
@@ -117,12 +118,15 @@ def trigger_cluster_edit(request, pk):
 # ---------------------------
 @staff_member_required
 def trigger_list(request):
-    items = (
+    q = (request.GET.get("q") or "").strip()
+    rows = (
         Trigger.objects.select_related("cluster", "primary_therapy")
         .all()
         .order_by("display_name", "code")
     )
-    return render(request, "publisher/trigger_list.html", {"items": items})
+    if q:
+        rows = rows.filter(Q(code__icontains=q) | Q(display_name__icontains=q))
+    return render(request, "publisher/trigger_list.html", {"rows": rows, "q": q})
 
 
 @staff_member_required
@@ -157,8 +161,11 @@ def trigger_edit(request, pk):
 # ---------------------------
 @staff_member_required
 def video_list(request):
-    items = Video.objects.all().order_by("code")
-    return render(request, "publisher/video_list.html", {"items": items})
+    q = (request.GET.get("q") or "").strip()
+    rows = Video.objects.all().order_by("code")
+    if q:
+        rows = rows.filter(Q(code__icontains=q))
+    return render(request, "publisher/video_list.html", {"rows": rows, "q": q})
 
 
 @staff_member_required
@@ -189,18 +196,13 @@ def video_create(request):
             return redirect("publisher:video_list")
     else:
         form = VideoForm()
-        # Prepopulate 8 language rows
         initial = [{"language_code": code} for code in ("en", "hi", "mr", "te", "ta", "bn", "ml", "kn")]
         formset = FormSet(initial=initial)
 
     return render(
         request,
         "publisher/video_form.html",
-        {
-            "form": form,
-            "formset": formset,
-            "object": None,
-        },
+        {"form": form, "formset": formset, "object": None},
     )
 
 
@@ -223,7 +225,6 @@ def video_edit(request, pk):
                 form.save()
                 formset.save()
 
-                # Update cluster membership
                 selected_clusters = list(form.cleaned_data.get("clusters") or [])
                 selected_ids = {c.id for c in selected_clusters}
                 existing_ids = set(video.clusters.values_list("id", flat=True))
@@ -249,11 +250,7 @@ def video_edit(request, pk):
     return render(
         request,
         "publisher/video_form.html",
-        {
-            "form": form,
-            "formset": formset,
-            "object": video,
-        },
+        {"form": form, "formset": formset, "object": video},
     )
 
 
@@ -262,8 +259,11 @@ def video_edit(request, pk):
 # ---------------------------
 @staff_member_required
 def cluster_list(request):
-    items = VideoCluster.objects.select_related("trigger").all().order_by("display_name", "code")
-    return render(request, "publisher/cluster_list.html", {"items": items})
+    q = (request.GET.get("q") or "").strip()
+    rows = VideoCluster.objects.select_related("trigger").all().order_by("display_name", "code")
+    if q:
+        rows = rows.filter(Q(code__icontains=q) | Q(display_name__icontains=q))
+    return render(request, "publisher/cluster_list.html", {"rows": rows, "q": q})
 
 
 @staff_member_required
@@ -294,12 +294,7 @@ def cluster_create(request):
     return render(
         request,
         "publisher/cluster_form.html",
-        {
-            "form": form,
-            "lang_formset": lang_formset,
-            "video_formset": video_formset,
-            "object": None,
-        },
+        {"form": form, "lang_formset": lang_formset, "video_formset": video_formset, "object": None},
     )
 
 
@@ -331,12 +326,7 @@ def cluster_edit(request, pk):
     return render(
         request,
         "publisher/cluster_form.html",
-        {
-            "form": form,
-            "lang_formset": lang_formset,
-            "video_formset": video_formset,
-            "object": cluster,
-        },
+        {"form": form, "lang_formset": lang_formset, "video_formset": video_formset, "object": cluster},
     )
 
 
@@ -345,16 +335,9 @@ def cluster_edit(request, pk):
 # ---------------------------
 @staff_member_required
 def map_list(request):
-    """
-    Shows Trigger -> Bundle mappings by listing bundles and their assigned trigger.
-    """
     q = (request.GET.get("q") or "").strip()
 
-    bundles = (
-        VideoCluster.objects.select_related("trigger", "trigger__primary_therapy")
-        .all()
-        .order_by("display_name", "code")
-    )
+    bundles = VideoCluster.objects.select_related("trigger", "trigger__primary_therapy").all().order_by("display_name", "code")
     if q:
         bundles = bundles.filter(
             Q(code__icontains=q)
@@ -363,14 +346,9 @@ def map_list(request):
             | Q(trigger__display_name__icontains=q)
         )
 
-    return render(
-        request,
-        "publisher/map_list.html",
-        {
-            "items": bundles,
-            "q": q,
-        },
-    )
+    # NOTE: your map_list template may expect "items" (bundle-mapping UI) or "rows" (legacy UI).
+    # The bundle-mapping templates we used expect "items".
+    return render(request, "publisher/map_list.html", {"items": bundles, "q": q})
 
 
 @staff_member_required
@@ -408,23 +386,10 @@ def map_edit(request, pk):
     return render(request, "publisher/map_form.html", {"form": form, "object": bundle})
 
 
-# ---------------------------
-# Legacy Video Trigger Maps (not exposed in the UI by default)
-# ---------------------------
 @staff_member_required
 def legacy_video_trigger_map_list(request):
-    """
-    Kept for backward compatibility / troubleshooting.
-    Not linked from the dashboard.
-    """
     q = (request.GET.get("q") or "").strip()
-    items = (
-        VideoTriggerMap.objects.select_related("trigger", "video")
-        .all()
-        .order_by("trigger__code", "video__code")
-    )
-
+    items = VideoTriggerMap.objects.select_related("trigger", "video").all().order_by("trigger__code", "video__code")
     if q:
         items = items.filter(Q(video__code__icontains=q) | Q(trigger__code__icontains=q))
-
-    return render(request, "publisher/map_list.html", {"items": items, "q": q})
+    return render(request, "publisher/map_list.html", {"rows": items, "q": q})
